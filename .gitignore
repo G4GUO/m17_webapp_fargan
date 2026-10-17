@@ -1,4 +1,5 @@
-m17gismo/*.o
+*.o
+m17gismo/m17web
 m17gismo/m17web
 m17gismo/m17gismo
 m17gismo/www_assets.h

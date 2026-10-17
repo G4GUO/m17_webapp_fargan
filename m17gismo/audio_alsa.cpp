@@ -363,16 +363,31 @@ static bool open_pcm(snd_pcm_t **pcm, const char *dev, snd_pcm_stream_t dir, con
     // retry wipe a working stream, leaving the device open but unreachable.
     snd_pcm_t *p = NULL;
     int rc = 0;
-    for (int attempt = 0; attempt < 6; attempt++) {
+    // 8 attempts, 350 ms apart: about 2.8 s, enough for a USB card to be
+    // released or a bluealsa A2DP stream to tear down.  Opening a device while
+    // another process is still letting go of it is the common case here - a
+    // restart, a device change, Bluetooth coming back - and is not an error.
+    for (int attempt = 0; attempt < 8; attempt++) {
         rc = snd_pcm_open(&p, dev, dir, 0);
         if (rc >= 0) break;
         if (rc != -EBUSY && rc != -EAGAIN) break;
-        usleep(250000);
+        usleep(350000);
     }
     if (rc < 0) {
         snprintf(m_error, sizeof(m_error), "%s (%s): %s", what, dev, snd_strerror(rc));
         m_error_stream = (dir == SND_PCM_STREAM_CAPTURE) ? 1 : 2;
         return false;
+    }
+    // Adopt the new handle, but never orphan the old one.  If the caller still
+    // has a stream open - two threads applying a device change in the same
+    // cycle, a re-open that overlapped one - overwriting the pointer leaves the
+    // card held by this very process with nothing pointing at it, and every
+    // later open of that device then answers "Device or resource busy" against
+    // itself, for good.  Closing it first keeps the pointers and the hardware in
+    // step, and a leaked open is worth a moment of extra close here.
+    if (*pcm && *pcm != p) {
+        snd_pcm_close(*pcm);
+        *pcm = NULL;
     }
     *pcm = p;
     snd_pcm_hw_params_t *hw;
