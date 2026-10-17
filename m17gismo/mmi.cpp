@@ -450,7 +450,8 @@ void mmi_parse(char *cmd){
 				unsigned long n; unsigned int sec;
 				char line[200];
 				rec_stats(&n, &sec);
-				snprintf(line, sizeof(line), "recording to %s, %u s", rec_file(), sec);
+				snprintf(line, sizeof(line), "recording to %s at %d Hz, %u s",
+				         rec_file(), rec_rate(), sec);
 				gui_cmd_resp(line);
 			} else if(rec_file()[0]){
 				char line[200];
@@ -462,8 +463,11 @@ void mmi_parse(char *cmd){
 			valid = true;
 		} else if(strncmp(token[1],"on",2)==0){
 			char line[200];
-			if(rec_start(nt >= 3 ? token[2] : NULL))
-				snprintf(line, sizeof(line), "recording to %s", rec_file());
+			// The rate follows the decoder in use: FARGAN synthesises at 16 kHz and
+			// that is what is worth keeping, the classic decoder gives 8 kHz.
+			int rate = fargan_rx_enabled() ? 16000 : 8000;
+			if(rec_start(nt >= 3 ? token[2] : NULL, rate))
+				snprintf(line, sizeof(line), "recording to %s at %d Hz", rec_file(), rec_rate());
 			else
 				snprintf(line, sizeof(line), "cannot record: %s", rec_error());
 			gui_cmd_resp(line);

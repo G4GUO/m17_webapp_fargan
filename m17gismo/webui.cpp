@@ -268,9 +268,9 @@ static void build_state(char *out, int len) {
         unsigned long rs = 0;
         unsigned int  rsec = 0;
         rec_stats(&rs, &rsec);
-        o = json_add(out, len, o, ",\"record\":{\"on\":%s,\"file\":\"%s\",\"seconds\":%u,"
-                     "\"samples\":%lu,\"error\":\"%s\"}",
-                     rec_active() ? "true" : "false", rec_file(), rsec, rs, rec_error());
+        o = json_add(out, len, o, ",\"record\":{\"on\":%s,\"file\":\"%s\",\"rate\":%d,"
+                     "\"seconds\":%u,\"samples\":%lu,\"error\":\"%s\"}",
+                     rec_active() ? "true" : "false", rec_file(), rec_rate(), rsec, rs, rec_error());
     }
     // What Bluetooth knows, from the cache the "bt" command refreshes - this
     // runs on the radio's thread and must never shell out.

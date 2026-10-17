@@ -33,10 +33,12 @@ void fargan_rx_reset(void);
 // audio matters more than filling in the past.
 void fargan_rx_push(const uint8_t *bits8);
 
-// Take one 20 ms block (160 samples at 8 kHz) if the synthesis thread has one
-// ready.  Returns 0 when it has not, which the caller should ride out rather
-// than wait for.
-int fargan_rx_pull(int16_t *out160);
+// Take one 20 ms block if the synthesis thread has one ready: 160 samples at
+// 8 kHz, which is what the station's audio path plays, and - when the caller
+// wants it - the same audio at FARGAN's own 16 kHz, which is what a recording
+// should keep.  Either pointer may be NULL.  Returns 0 when nothing is ready,
+// which the caller rides out rather than waiting for.
+int fargan_rx_pull(int16_t *out8k, int16_t *out16k);
 
 // Queue and drop counts, for the state the web page shows.
 void fargan_rx_stats(unsigned long *queued, unsigned long *decoded,

@@ -71,6 +71,13 @@ so nothing has to be converted.
     record on [file]  start (default rx-<date>-<time>.wav)
     record off        close it
 
+**The recording follows the decoder in use.**  FARGAN synthesises at 16 kHz, and
+that is what a recording keeps; with the neural receiver off, the classic decoder
+gives 8 kHz.  The rate is fixed when recording starts, because a WAV file has one
+rate - so if FARGAN is switched during a recording the new samples are refused
+and the state says why, rather than being written into a file that would play at
+the wrong pitch.
+
 The Audio card carries the same control, with the file name and the running time
 next to it.  It is **not** kept in `config.txt`, deliberately: a station that
 began recording itself after a reboot would fill its own disk.  It stops itself

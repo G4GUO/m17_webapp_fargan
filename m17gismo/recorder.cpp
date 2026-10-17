@@ -25,8 +25,11 @@
 
 #include "recorder.h"
 
-#define REC_RATE        8000
-#define REC_MAX_SECONDS (30 * 60)        /* half an hour, about 29 MB */
+/* The rate is fixed when a recording starts: a WAV file has one rate, and
+   writing samples of another rate into it would only mis-pitch the result.  The
+   classic decoder gives 8 kHz; FARGAN's own output is 16 kHz. */
+static int s_rate = 8000;
+#define REC_MAX_SECONDS (30 * 60)        /* half an hour */
 #define REC_FIXUP_SEC   5
 
 static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -67,8 +70,8 @@ static void write_header(FILE *f, uint32_t data_bytes)
     memcpy(h + 12, "fmt ", 4);  put32(h + 16, 16);
     put16(h + 20, 1);                           /* PCM */
     put16(h + 22, 1);                           /* mono */
-    put32(h + 24, REC_RATE);
-    put32(h + 28, REC_RATE * 2);                /* byte rate */
+    put32(h + 24, (uint32_t)s_rate);
+    put32(h + 28, (uint32_t)s_rate * 2);        /* byte rate = rate * channels * 2 */
     put16(h + 32, 2);                           /* block align */
     put16(h + 34, 16);                          /* bits per sample */
     memcpy(h + 36, "data", 4);  put32(h + 40, data_bytes);
@@ -95,14 +98,21 @@ void rec_stats(unsigned long *samples, unsigned int *seconds)
 {
     pthread_mutex_lock(&s_lock);
     if (samples) *samples = s_samples;
-    if (seconds) *seconds = (unsigned int)(s_samples / REC_RATE);
+    if (seconds) *seconds = (unsigned int)(s_samples / (s_rate > 0 ? s_rate : 8000));
     pthread_mutex_unlock(&s_lock);
 }
 
-bool rec_start(const char *path)
+int rec_rate(void) { return s_rate; }
+
+bool rec_start(const char *path, int rate)
 {
     char name[256];
     FILE *f;
+
+    if (rate != 8000 && rate != 16000) {
+        snprintf(s_err, sizeof(s_err), "unsupported rate %d (8000 or 16000)", rate);
+        return false;
+    }
 
     if (path && *path) {
         snprintf(name, sizeof(name), "%s", path);
@@ -125,6 +135,7 @@ bool rec_start(const char *path)
         pthread_mutex_unlock(&s_lock);
         return false;
     }
+    s_rate = rate;
     write_header(f, 0);
     s_f = f;
     snprintf(s_path, sizeof(s_path), "%s", name);
@@ -146,13 +157,22 @@ void rec_stop(void)
     pthread_mutex_unlock(&s_lock);
 }
 
-void rec_push(const int16_t *samples, int count)
+void rec_push(const int16_t *samples, int count, int rate)
 {
     if (count <= 0) return;
 
     pthread_mutex_lock(&s_lock);
     if (s_f) {
-        if (s_samples + (unsigned long)count > (unsigned long)REC_MAX_SECONDS * REC_RATE) {
+        if (rate != s_rate) {
+            /* FARGAN was switched while recording.  Say so rather than writing
+               samples into a file whose header claims something else. */
+            snprintf(s_err, sizeof(s_err),
+                     "samples at %d Hz ignored: this recording is %d Hz", rate, s_rate);
+            pthread_mutex_unlock(&s_lock);
+            return;
+        }
+        if (s_samples + (unsigned long)count >
+            (unsigned long)REC_MAX_SECONDS * (unsigned long)s_rate) {
             write_header(s_f, (uint32_t)(s_samples * sizeof(int16_t)));
             fclose(s_f);
             s_f = NULL;

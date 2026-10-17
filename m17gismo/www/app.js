@@ -226,7 +226,8 @@ function renderRecord(s) {
   const st = $('recstat');
   if (!st) return;
   if (r.on) {
-    st.textContent = r.file + '  ' + (r.seconds || 0) + ' s';
+    st.textContent = r.file + '  ' + (r.seconds || 0) + ' s at ' +
+      ((r.rate || 8000) / 1000) + ' kHz';
     st.style.color = 'var(--green)';
   } else if (r.error) {
     st.textContent = r.error;

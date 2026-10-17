@@ -17,16 +17,22 @@
 // Is a recording open?
 bool rec_active(void);
 
-// Start a recording.  path may be NULL, which names the file after the date and
-// time (rx-YYYYMMDD-HHMMSS.wav) in the working directory.  Returns false on
-// failure; rec_error() says why.
-bool rec_start(const char *path);
+// Start a recording at the given rate (8000 for the classic decoder, 16000 for
+// FARGAN's own output).  A WAV file has one rate, so the choice is fixed here and
+// samples arriving at a different rate are refused rather than written into a
+// file that would then play at the wrong pitch.  path may be NULL, which names
+// the file after the date and time (rx-YYYYMMDD-HHMMSS.wav) in the working
+// directory.  Returns false on failure; rec_error() says why.
+bool rec_start(const char *path, int rate);
 
 // Stop and close it.  Safe to call when nothing is recording.
 void rec_stop(void);
 
-// The audio that is being played: mono, 8 kHz, signed 16-bit.
-void rec_push(const int16_t *samples, int count);
+// Audio to write: mono, signed 16-bit, at the recording's rate.
+void rec_push(const int16_t *samples, int count, int rate);
+
+// The rate the current (or last) file was written at, 0 if there has never been one.
+int rec_rate(void);
 
 // Current (or most recently used) file name, "" if there has never been one.
 const char *rec_file(void);

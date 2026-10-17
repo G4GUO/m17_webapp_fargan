@@ -57,7 +57,16 @@ static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static uint8_t s_fq[Q_FRAMES][C2F_BYTES_PER_FRAME];
 static unsigned s_fq_head, s_fq_tail;
-static int16_t s_bq[Q_BLOCKS][IN_SAMPLES];
+
+// Each finished frame is kept at both rates: the 8 kHz the audio path plays,
+// and FARGAN's own 16 kHz, which is what a recording should keep.  Decimating
+// here rather than in the receive path keeps the filter history on one thread.
+typedef struct {
+    int16_t pcm8[IN_SAMPLES];
+    int16_t pcm16[OUT_SAMPLES];
+} rx_block;
+
+static rx_block s_bq[Q_BLOCKS];
 static unsigned s_bq_head, s_bq_tail;
 
 static std::atomic<bool>     s_on{false};        /* the option is switched on */
@@ -158,14 +167,14 @@ static bool new_transmission(void)
 // ---------------------------------------------------------------------------
 // The synthesis thread
 // ---------------------------------------------------------------------------
-static void block_push(const int16_t *block)
+static void block_push(const rx_block *block)
 {
     pthread_mutex_lock(&s_lock);
     if (s_bq_head - s_bq_tail >= Q_BLOCKS) {
         s_bq_tail++;                 /* the consumer is behind: drop the oldest */
         s_dropped++;
     }
-    memcpy(s_bq[s_bq_head % Q_BLOCKS], block, IN_SAMPLES * sizeof(int16_t));
+    s_bq[s_bq_head % Q_BLOCKS] = *block;
     s_bq_head++;
     pthread_mutex_unlock(&s_lock);
 }
@@ -197,11 +206,20 @@ static void *synthesis_thread(void *arg)
         else if (new_transmission()) c2f_reset(s_dec);
 
         c2f_decode_float(s_dec, f, frame);
-        if (decimate(f, OUT_SAMPLES, block) == IN_SAMPLES) {
-            block_push(block);
-            pthread_mutex_lock(&s_lock);
-            s_decoded++;
-            pthread_mutex_unlock(&s_lock);
+        {
+            rx_block b;
+            for (int i = 0; i < OUT_SAMPLES; i++) {
+                int v = (int)lrint(f[i] * 32768.0);
+                if (v > 32767)  v = 32767;
+                if (v < -32768) v = -32768;
+                b.pcm16[i] = (int16_t)v;
+            }
+            if (decimate(f, OUT_SAMPLES, b.pcm8) == IN_SAMPLES) {
+                block_push(&b);
+                pthread_mutex_lock(&s_lock);
+                s_decoded++;
+                pthread_mutex_unlock(&s_lock);
+            }
         }
     }
     return NULL;
@@ -267,13 +285,15 @@ void fargan_rx_push(const uint8_t *bits8)
     pthread_mutex_unlock(&s_lock);
 }
 
-int fargan_rx_pull(int16_t *out160)
+int fargan_rx_pull(int16_t *out8k, int16_t *out16k)
 {
     int got = 0;
 
     pthread_mutex_lock(&s_lock);
     if (s_bq_tail != s_bq_head) {
-        memcpy(out160, s_bq[s_bq_tail % Q_BLOCKS], IN_SAMPLES * sizeof(int16_t));
+        const rx_block *b = &s_bq[s_bq_tail % Q_BLOCKS];
+        if (out8k)  memcpy(out8k,  b->pcm8,  IN_SAMPLES * sizeof(int16_t));
+        if (out16k) memcpy(out16k, b->pcm16, OUT_SAMPLES * sizeof(int16_t));
         s_bq_tail++;
         got = 1;
     } else {
@@ -290,7 +310,12 @@ bool fargan_rx_enabled(void)  { return false; }
 void fargan_rx_set(bool on)   { (void)on; }
 void fargan_rx_reset(void)    {}
 void fargan_rx_push(const uint8_t *bits8) { (void)bits8; }
-int  fargan_rx_pull(int16_t *out160) { memset(out160, 0, 160 * sizeof(int16_t)); return 0; }
+int  fargan_rx_pull(int16_t *out8k, int16_t *out16k)
+{
+    if (out8k)  memset(out8k,  0, 160 * sizeof(int16_t));
+    if (out16k) memset(out16k, 0, 320 * sizeof(int16_t));
+    return 0;
+}
 void fargan_rx_stats(unsigned long *q, unsigned long *d, unsigned long *dr, unsigned long *dy)
 {
     if (q) *q = 0; if (d) *d = 0; if (dr) *dr = 0; if (dy) *dy = 0;

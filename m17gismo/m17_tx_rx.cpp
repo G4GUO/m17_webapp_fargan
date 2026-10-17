@@ -175,19 +175,26 @@ void m17_txrx_spkr_audio( uint8_t *data ){
    // less than the demodulator falling behind.
    static int16_t last[320];          // zeros until the first block arrives
    if (fargan_rx_enabled()) {
-      int16_t block[160];
+      int16_t block8[160], block16[320];
       fargan_rx_push(data);
-      if (fargan_rx_pull(block)) memcpy(last, block, sizeof(block));
+      if (fargan_rx_pull(block8, block16)) {
+         memcpy(last, block8, sizeof(block8));
+         // The audio path plays the 8 kHz version, but a recording keeps
+         // FARGAN's own 16 kHz output: that is the resolution it synthesised at,
+         // and decimating it only throws information away.
+         rec_push(block16, 320, 16000);
+         audio_output(block8, m_nsam);
+         return;
+      }
       // If nothing is ready yet - the first frames after switching on - keep the
       // audio stream fed with the previous block rather than dropping to silence.
-      rec_push(last, m_nsam);         // what is played is what is recorded
       audio_output(last, m_nsam);
       return;
    }
 
    codec2_decode(m_codec2, m_aspksamples, data);
    memcpy(last, m_aspksamples, sizeof(int16_t) * (m_nsam < 320 ? m_nsam : 320));
-   rec_push(last, m_nsam);
+   rec_push(m_aspksamples, m_nsam, 8000);      // the classic decoder is 8 kHz
    audio_output(m_aspksamples, m_nsam);
 }
 
