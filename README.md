@@ -60,6 +60,27 @@ samples FARGAN produces are decimated back to the audio path's 160, which costs
 0.017 ms per frame.  The harness, the raw runs and the integration notes are in
 `/mnt/hf/shared/projects/m17_neural` (`RESULTS.md`, `docs/PLAN.md`).
 
+## Recording what you hear
+
+A recording captures exactly what the receiver decodes - the samples handed to
+the speaker, whichever decoder produced them - as a mono 8 kHz WAV in the
+station's working directory, which is the format Codec2 3200 already works in,
+so nothing has to be converted.
+
+    record            is it recording, and where
+    record on [file]  start (default rx-<date>-<time>.wav)
+    record off        close it
+
+The Audio card carries the same control, with the file name and the running time
+next to it.  It is **not** kept in `config.txt`, deliberately: a station that
+began recording itself after a reboot would fill its own disk.  It stops itself
+after 30 minutes, and the WAV header is rewritten every few seconds, so a
+recording interrupted by a power cut still plays.
+
+The useful trick: switch FARGAN off, record a passage, switch it on, record the
+same kind of thing again.  Both files come off the identical receive path, so
+the comparison is the vocoder and nothing else.
+
 Nothing in `m17_*.cpp`, `pluto.cpp`, `lime.cpp`, `buffers.cpp` was rewritten for
 the web UI.  Small additive changes only: a reflector-module
 getter, gain/name/type getters, a `radio_keyed()` fix (upstream always called

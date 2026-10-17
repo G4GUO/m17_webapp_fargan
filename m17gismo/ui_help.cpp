@@ -43,6 +43,8 @@ static const char *const help_lines[] = {
 	"mixer N PCT     set control number N (0-100; \"on\"/\"off\" too), kept in config.txt",
 	"fargan          the neural receiver: is it built in, and is it on",
 	"fargan on|off   FARGAN synthesis of received frames at 16 kHz, kept in config.txt",
+	"record          is it recording, and where",
+	"record on [f]   write what is received (what you hear) to a mono 8 kHz WAV; record off stops",
 	"mixer NAME PCT  ...or set one by name, if the name has no spaces",
 	"bt              what Bluetooth devices are known, and which is in use",
 	"bt use MAC speaker   play through a Bluetooth speaker (mic stays on the card)",

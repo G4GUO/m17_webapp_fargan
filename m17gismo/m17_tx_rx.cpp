@@ -7,6 +7,7 @@
 #include <time.h>
 #include "m17defines.h"
 #include "fargan.h"   // receive-only neural synthesis; a stub unless FARGAN_RX
+#include "recorder.h" // optional capture of the decoded audio as a WAV
 // codec2 (or the modified codec through codec2mod/codec2_shim.h) is included by
 // m17defines.h according to CODEC2_BACKEND.
 
@@ -179,12 +180,14 @@ void m17_txrx_spkr_audio( uint8_t *data ){
       if (fargan_rx_pull(block)) memcpy(last, block, sizeof(block));
       // If nothing is ready yet - the first frames after switching on - keep the
       // audio stream fed with the previous block rather than dropping to silence.
+      rec_push(last, m_nsam);         // what is played is what is recorded
       audio_output(last, m_nsam);
       return;
    }
 
    codec2_decode(m_codec2, m_aspksamples, data);
    memcpy(last, m_aspksamples, sizeof(int16_t) * (m_nsam < 320 ? m_nsam : 320));
+   rec_push(last, m_nsam);
    audio_output(m_aspksamples, m_nsam);
 }
 

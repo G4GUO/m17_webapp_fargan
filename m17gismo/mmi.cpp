@@ -6,6 +6,7 @@
 #include "audio.h"
 #include "bluetooth.h"
 #include "fargan.h"
+#include "recorder.h"
 #ifdef HAVE_SIM
 #include "radio_sim.h"
 #endif
@@ -430,6 +431,48 @@ void mmi_parse(char *cmd){
 		if(nt == 2){
 			bool on = (strncmp(token[1],"on",2)==0)||(strncmp(token[1],"all",3)==0);
 			m17_txrx_listen_all(on);
+			valid = true;
+		}
+	}
+
+	// Recording: writes what the receiver decodes - the same audio that goes to
+	// the speaker, whichever decoder produced it - as a mono 8 kHz WAV, so a
+	// classic example and a neural one can be compared directly.  Deliberately
+	// not kept in config.txt: a station that started recording itself after a
+	// reboot would fill its own disk.
+	//
+	//   record            is it recording, and where
+	//   record on [file]  start (default rx-<date>-<time>.wav in the working directory)
+	//   record off        close it
+	if(strncmp(token[0],"record",6)==0){
+		if(nt == 1){
+			if(rec_active()){
+				unsigned long n; unsigned int sec;
+				char line[200];
+				rec_stats(&n, &sec);
+				snprintf(line, sizeof(line), "recording to %s, %u s", rec_file(), sec);
+				gui_cmd_resp(line);
+			} else if(rec_file()[0]){
+				char line[200];
+				snprintf(line, sizeof(line), "not recording; last file %s", rec_file());
+				gui_cmd_resp(line);
+			} else {
+				gui_cmd_resp("not recording: record on starts, record off stops");
+			}
+			valid = true;
+		} else if(strncmp(token[1],"on",2)==0){
+			char line[200];
+			if(rec_start(nt >= 3 ? token[2] : NULL))
+				snprintf(line, sizeof(line), "recording to %s", rec_file());
+			else
+				snprintf(line, sizeof(line), "cannot record: %s", rec_error());
+			gui_cmd_resp(line);
+			valid = true;
+		} else if(strncmp(token[1],"off",3)==0){
+			char line[200];
+			rec_stop();
+			snprintf(line, sizeof(line), "recording stopped: %s", rec_file());
+			gui_cmd_resp(line);
 			valid = true;
 		}
 	}

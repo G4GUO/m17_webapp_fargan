@@ -164,6 +164,12 @@
         <span class="lbl" id="farganstat"></span>
       </div>
       <div class="row">
+        <label class="chk" title="Records what the receiver decodes, exactly as it is played, as a mono 8 kHz WAV in the working directory. Not remembered across restarts, and it stops itself after 30 minutes.">
+          <input type="checkbox" id="recbox" onchange="cmd('record ' + (this.checked ? 'on' : 'off'))">
+          record what is received</label>
+        <span class="lbl" id="recstat"></span>
+      </div>
+      <div class="row">
         <button id="btopen">Bluetooth&hellip;</button>
         <span class="lbl" id="btstatus">no Bluetooth device selected</span>
       </div>

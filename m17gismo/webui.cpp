@@ -21,6 +21,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include "fargan.h"
+#include "recorder.h"
 #include <time.h>
 #include <ctype.h>
 #include <pthread.h>
@@ -260,6 +261,16 @@ static void build_state(char *out, int len) {
         fargan_rx_stats(&fq, &fd, &fdrop, &fdry);
         o = json_add(out, len, o, ",\"fargan_rx\":{\"queued\":%lu,\"decoded\":%lu,"
                      "\"dropped\":%lu,\"dry\":%lu}", fq, fd, fdrop, fdry);
+    }
+    {
+        // The recorder: whether it is running, which file, and how long.  Not a
+        // remembered setting, so this says what is actually happening.
+        unsigned long rs = 0;
+        unsigned int  rsec = 0;
+        rec_stats(&rs, &rsec);
+        o = json_add(out, len, o, ",\"record\":{\"on\":%s,\"file\":\"%s\",\"seconds\":%u,"
+                     "\"samples\":%lu,\"error\":\"%s\"}",
+                     rec_active() ? "true" : "false", rec_file(), rsec, rs, rec_error());
     }
     // What Bluetooth knows, from the cache the "bt" command refreshes - this
     // runs on the radio's thread and must never shell out.

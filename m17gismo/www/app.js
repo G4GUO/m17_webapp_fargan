@@ -127,6 +127,7 @@ function applyState(s) {
   renderMixer(s);
   renderBt(s);
   renderFargan(s);
+  renderRecord(s);
   $('simrow').style.display = (s.radio === 'sim') ? 'flex' : 'none';
 }
 
@@ -212,6 +213,30 @@ function renderFargan(s) {
   st.textContent = 'decoded ' + decoded + ' frames, ' + Math.max(0, queued - decoded) +
                    ' waiting, ' + dropped + ' dropped, ' + dry + ' starved';
   st.style.color = (dropped || dry) ? 'var(--amber)' : 'var(--dim)';
+}
+
+// Recording is deliberately not a remembered setting: it is off after every
+// restart, so this always shows the recorder's real state.  The checkbox is
+// wired straight to "record on"/"record off".
+function renderRecord(s) {
+  const box = $('recbox');
+  if (!box) return;
+  const r = (s && s.record) || {};
+  if (document.activeElement !== box) box.checked = !!r.on;
+  const st = $('recstat');
+  if (!st) return;
+  if (r.on) {
+    st.textContent = r.file + '  ' + (r.seconds || 0) + ' s';
+    st.style.color = 'var(--green)';
+  } else if (r.error) {
+    st.textContent = r.error;
+    st.style.color = 'var(--amber)';
+  } else if (r.file) {
+    st.textContent = 'saved ' + r.file;
+    st.style.color = 'var(--dim)';
+  } else {
+    st.textContent = '';
+  }
 }
 
 // Bluetooth audio.  The state carries the list the "bt" command cached, so the

@@ -558,6 +558,11 @@ def build(path: str) -> None:
         ["fargan on", "Receive through FARGAN at 16 kHz instead of the classic decoder. Costs about "
                       "half the Pi's CPU, and is remembered for the next start."],
         ["fargan off", "Back to the classic decoder."],
+        ["record", "Is it recording, and where? Whatever you hear is what gets written."],
+        ["record on", "Record what the receiver decodes as a mono 8 kHz WAV in the station's "
+                      "working directory. Not remembered across a restart, and it stops itself "
+                      "after 30 minutes."],
+        ["record off", "Close the recording; the file is then complete."],
         ["gps", "Show the GPS receiver, the fix and your locator. <b>gps /dev/ttyACM1 38400</b> uses a "
                 "different receiver."],
         ["gps meta off", "Stop sending your position to other stations; <b>gps meta on</b> starts again. The "
