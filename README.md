@@ -88,6 +88,11 @@ The useful trick: switch FARGAN off, record a passage, switch it on, record the
 same kind of thing again.  Both files come off the identical receive path, so
 the comparison is the vocoder and nothing else.
 
+Recordings made from the live station are kept in `examples/`: the 16 kHz files
+are FARGAN's own output, the 8 kHz ones the classic decoder, and the pair
+recorded ten seconds apart is the closest thing to a like-for-like comparison in
+the set.  Play them rather than reading any number about them.
+
 Nothing in `m17_*.cpp`, `pluto.cpp`, `lime.cpp`, `buffers.cpp` was rewritten for
 the web UI.  Small additive changes only: a reflector-module
 getter, gain/name/type getters, a `radio_keyed()` fix (upstream always called
