@@ -2,22 +2,32 @@
 //
 // M17-Project/Codec2-mod-neural (vendored in c2fargan/), Wojciech Kaczmarski
 // SP5WWP's neural receiver, replaces only the receiver's synthesis step: the
-// same 8-byte Codec2 3200 frames become speech at
-// 16 kHz instead of 8 kHz.  The bitstream, the transmitter and every other
-// station are untouched, which is what makes it a receive-only option rather
-// than a fork of M17.
+// same 8-byte Codec2 3200 frames become speech at 16 kHz instead of 8 kHz.  The
+// bitstream, the transmitter and every other station are untouched, which is
+// what makes this a receive-only option rather than a fork of M17.
 //
-// The audio path here is 8 kHz, so the 320 samples FARGAN produces per frame are
-// decimated back to the 160 the rest of the program expects.  That decimation
-// measured 0.017 ms per frame - 0.09% of a core - so the choice between this and
-// widening the audio path to 16 kHz is about work, not performance.
+// The synthesis costs about 9.6 ms for every 20 ms frame - half a Pi 4 core -
+// and the receive path runs on the radio thread and on the reflector thread,
+// neither of which can spare it: the demodulator would fall behind and audio
+// would be dropped.  So the work happens here, on its own thread:
 //
-// Measured on this station's Pi 4B: 9.6 ms per 20 ms frame, 48% of one core,
-// 2.1x real time.  Harness and raw numbers: m17_neural/RESULTS.md.
+//   receive thread --push frame--> [frame queue] --> synthesis thread
+//                                                          |
+//   receive thread <--pull block-- [block queue] <---------+  16 kHz -> 8 kHz
+//
+// one frame of latency (20 ms) in exchange for the receive path never waiting.
+// The station's audio path is 8 kHz, so FARGAN's 320 samples are decimated to
+// 160 here, on the synthesis thread, where the filter's history has one owner.
+//
+// Measured on this station's Pi 4B: 9.6 ms per 20 ms frame, 2.1x real time.
+// Harness and raw numbers: m17_neural/RESULTS.md.
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <atomic>
 
 #include "fargan.h"
 
@@ -25,26 +35,56 @@
 
 #include "c2fargan.h"
 
-#define OUT_SAMPLES C2F_SAMPLES_PER_FRAME   /* 320, 20 ms at 16 kHz */
 #define IN_SAMPLES  160                     /* what the audio path wants */
+#define OUT_SAMPLES C2F_SAMPLES_PER_FRAME   /* 320, 20 ms at 16 kHz */
 
 // ---------------------------------------------------------------------------
-// The decoder
+// The decoder and the two queues
 // ---------------------------------------------------------------------------
 // FARGAN's state is small and c2fargan offers caller-provided memory, so this
-// keeps the program's static style instead of allocating: no malloc, no failure
-// path at a bad moment.  c2f_size() is checked at first use.
+// keeps the program's static style instead of allocating.  Only the synthesis
+// thread ever touches it.
 static unsigned char s_storage[8192] __attribute__((aligned(16)));
 static c2f_decoder *s_dec;
-static bool s_on;
-static bool s_ready;
+
+// The station has two receive threads (radio and reflector) and both push and
+// pull, so the short critical sections are taken under a mutex rather than left
+// to a lock-free scheme that would assume one producer and one consumer.
+#define Q_FRAMES 32
+#define Q_BLOCKS 32
+
+static pthread_mutex_t s_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint8_t s_fq[Q_FRAMES][C2F_BYTES_PER_FRAME];
+static unsigned s_fq_head, s_fq_tail;
+static int16_t s_bq[Q_BLOCKS][IN_SAMPLES];
+static unsigned s_bq_head, s_bq_tail;
+
+static std::atomic<bool>     s_on{false};        /* the option is switched on */
+static std::atomic<bool>     s_wanted{false};    /* the thread should live    */
+static std::atomic<unsigned> s_reset_req{0};     /* reset at the next frame   */
+static pthread_t             s_thread;
+static bool                  s_thread_started = false;
+
+static unsigned long s_queued, s_decoded, s_dropped, s_dry;
 
 bool fargan_rx_compiled(void) { return true; }
-bool fargan_rx_enabled(void)  { return s_ready && s_on; }
+bool fargan_rx_enabled(void)  { return s_on.load(); }
+
+void fargan_rx_stats(unsigned long *queued, unsigned long *decoded,
+                     unsigned long *dropped, unsigned long *dry)
+{
+    pthread_mutex_lock(&s_lock);
+    if (queued)  *queued  = s_queued;
+    if (decoded) *decoded = s_decoded;
+    if (dropped) *dropped = s_dropped;
+    if (dry)     *dry     = s_dry;
+    pthread_mutex_unlock(&s_lock);
+}
 
 // ---------------------------------------------------------------------------
-// 16 kHz -> 8 kHz: a 31-tap windowed sinc, with its history kept across frames
-// so the decimation has no seams at frame boundaries.
+// 16 kHz -> 8 kHz: a 31-tap windowed sinc, history kept across frames.  Runs on
+// the synthesis thread only, so this state has a single owner.
 // ---------------------------------------------------------------------------
 #define RS_TAPS 31
 static float s_taps[RS_TAPS];
@@ -59,9 +99,9 @@ static void decimator_init(void)
 
     for (int i = 0; i < RS_TAPS; i++) {
         double x = (double)(i - M);
-        double s = (x == 0.0) ? 2.0 * fc : sin(2.0 * M_PI * fc * x) / (M_PI * x);
+        double v = (x == 0.0) ? 2.0 * fc : sin(2.0 * M_PI * fc * x) / (M_PI * x);
         double w = 0.54 - 0.46 * cos(2.0 * M_PI * (double)i / (double)(RS_TAPS - 1));
-        s_taps[i] = (float)(s * w);
+        s_taps[i] = (float)(v * w);
         sum += s_taps[i];
     }
     for (int i = 0; i < RS_TAPS; i++) s_taps[i] = (float)(s_taps[i] / sum);
@@ -90,14 +130,11 @@ static int decimate(const float *in, int n_in, int16_t *out)
 }
 
 // ---------------------------------------------------------------------------
-// Starting a new transmission
+// A new transmission should start with a clean decoder: c2fargan asks for
+// c2f_reset() per transmission, its output lags by 10 ms and its first frame is
+// silent.  Nothing here is told where a stream starts, so an idle gap stands in
+// for one - a second with no frames means the next one is something new.
 // ---------------------------------------------------------------------------
-// c2fargan asks for c2f_reset() at the start of every transmission: its output
-// lags the classic decoder by 10 ms and its first frame is silent by design.
-// This file is called from the receive path with no stream-start indication, so
-// an idle gap stands in for one - nothing decoded for a second means the next
-// frame is the start of something new.  Cheap, and the worst case is a reset in
-// the middle of a long pause.
 #define NEW_TX_GAP_S 1.0
 static struct timespec s_last;
 static bool s_have_last;
@@ -118,10 +155,61 @@ static bool new_transmission(void)
     return isnew;
 }
 
-static bool ensure_decoder(void)
+// ---------------------------------------------------------------------------
+// The synthesis thread
+// ---------------------------------------------------------------------------
+static void block_push(const int16_t *block)
 {
-    if (s_ready) return true;
+    pthread_mutex_lock(&s_lock);
+    if (s_bq_head - s_bq_tail >= Q_BLOCKS) {
+        s_bq_tail++;                 /* the consumer is behind: drop the oldest */
+        s_dropped++;
+    }
+    memcpy(s_bq[s_bq_head % Q_BLOCKS], block, IN_SAMPLES * sizeof(int16_t));
+    s_bq_head++;
+    pthread_mutex_unlock(&s_lock);
+}
 
+static void *synthesis_thread(void *arg)
+{
+    (void)arg;
+
+    while (s_wanted.load()) {
+        uint8_t frame[C2F_BYTES_PER_FRAME];
+        float f[OUT_SAMPLES];
+        int16_t block[IN_SAMPLES];
+        bool got = false;
+
+        pthread_mutex_lock(&s_lock);
+        if (s_fq_tail != s_fq_head) {
+            memcpy(frame, s_fq[s_fq_tail % Q_FRAMES], sizeof(frame));
+            s_fq_tail++;
+            got = true;
+        }
+        pthread_mutex_unlock(&s_lock);
+
+        if (!got) {
+            usleep(500);             /* a quarter of a frame time */
+            continue;
+        }
+
+        if (s_reset_req.exchange(0)) c2f_reset(s_dec);
+        else if (new_transmission()) c2f_reset(s_dec);
+
+        c2f_decode_float(s_dec, f, frame);
+        if (decimate(f, OUT_SAMPLES, block) == IN_SAMPLES) {
+            block_push(block);
+            pthread_mutex_lock(&s_lock);
+            s_decoded++;
+            pthread_mutex_unlock(&s_lock);
+        }
+    }
+    return NULL;
+}
+
+static bool ensure_ready(void)
+{
+    if (s_thread_started) return true;
     if (c2f_size() > sizeof(s_storage)) {
         printf("FARGAN: needs %lu bytes of state, only %lu available\n",
                (unsigned long)c2f_size(), (unsigned long)sizeof(s_storage));
@@ -130,50 +218,69 @@ static bool ensure_decoder(void)
     if (!s_taps_ready) decimator_init();
     s_dec = (c2f_decoder *)s_storage;
     c2f_init(s_dec);
-    s_ready = true;
+    s_wanted.store(true);
+    if (pthread_create(&s_thread, NULL, synthesis_thread, NULL) != 0) {
+        printf("FARGAN: could not start the synthesis thread\n");
+        s_wanted.store(false);
+        return false;
+    }
+    s_thread_started = true;
     return true;
 }
 
-void fargan_rx_reset(void)
-{
-    if (s_dec) c2f_reset(s_dec);
-    memset(s_hist, 0, sizeof(s_hist));
-    s_have_last = false;
-}
-
+// ---------------------------------------------------------------------------
+// Called from the receive threads
+// ---------------------------------------------------------------------------
 void fargan_rx_set(bool on)
 {
-    if (on && !ensure_decoder()) {
+    if (on && !ensure_ready()) {
         printf("FARGAN: not available\n");
-        s_on = false;
+        s_on.store(false);
         return;
     }
-    if (on) fargan_rx_reset();
-    s_on = on;
+    if (on) {
+        // Start clean: no audio from before the switch, and a fresh decoder.
+        pthread_mutex_lock(&s_lock);
+        s_fq_tail = s_fq_head;
+        s_bq_tail = s_bq_head;
+        pthread_mutex_unlock(&s_lock);
+        s_have_last = false;
+        s_reset_req.fetch_add(1);
+    }
+    s_on.store(on);
 }
 
-void fargan_decode_to_8k(const uint8_t *bits8, int16_t *out160)
-{
-    float f[OUT_SAMPLES];
+void fargan_rx_reset(void) { s_reset_req.fetch_add(1); }
 
-    if (!ensure_decoder()) {
-        memset(out160, 0, IN_SAMPLES * sizeof(int16_t));
-        return;
+void fargan_rx_push(const uint8_t *bits8)
+{
+    if (!s_on.load()) return;
+
+    pthread_mutex_lock(&s_lock);
+    if (s_fq_head - s_fq_tail >= Q_FRAMES) {
+        s_fq_tail++;                 /* live audio wins over the backlog */
+        s_dropped++;
     }
-    if (new_transmission()) c2f_reset(s_dec);
-    c2f_decode_float(s_dec, f, bits8);
-    if (decimate(f, OUT_SAMPLES, out160) != IN_SAMPLES)
-        memset(out160, 0, IN_SAMPLES * sizeof(int16_t));
+    memcpy(s_fq[s_fq_head % Q_FRAMES], bits8, C2F_BYTES_PER_FRAME);
+    s_fq_head++;
+    s_queued++;
+    pthread_mutex_unlock(&s_lock);
 }
 
-void fargan_decode_to_16k(const uint8_t *bits8, int16_t *out320)
+int fargan_rx_pull(int16_t *out160)
 {
-    if (!ensure_decoder()) {
-        memset(out320, 0, OUT_SAMPLES * sizeof(int16_t));
-        return;
+    int got = 0;
+
+    pthread_mutex_lock(&s_lock);
+    if (s_bq_tail != s_bq_head) {
+        memcpy(out160, s_bq[s_bq_tail % Q_BLOCKS], IN_SAMPLES * sizeof(int16_t));
+        s_bq_tail++;
+        got = 1;
+    } else {
+        s_dry++;
     }
-    if (new_transmission()) c2f_reset(s_dec);
-    c2f_decode(s_dec, out320, bits8);
+    pthread_mutex_unlock(&s_lock);
+    return got;
 }
 
 #else  // !FARGAN_RX - built without the neural receiver (make NEURAL=0)
@@ -182,17 +289,11 @@ bool fargan_rx_compiled(void) { return false; }
 bool fargan_rx_enabled(void)  { return false; }
 void fargan_rx_set(bool on)   { (void)on; }
 void fargan_rx_reset(void)    {}
-
-void fargan_decode_to_8k(const uint8_t *bits8, int16_t *out160)
+void fargan_rx_push(const uint8_t *bits8) { (void)bits8; }
+int  fargan_rx_pull(int16_t *out160) { memset(out160, 0, 160 * sizeof(int16_t)); return 0; }
+void fargan_rx_stats(unsigned long *q, unsigned long *d, unsigned long *dr, unsigned long *dy)
 {
-    (void)bits8;
-    memset(out160, 0, 160 * sizeof(int16_t));
-}
-
-void fargan_decode_to_16k(const uint8_t *bits8, int16_t *out320)
-{
-    (void)bits8;
-    memset(out320, 0, 320 * sizeof(int16_t));
+    if (q) *q = 0; if (d) *d = 0; if (dr) *dr = 0; if (dy) *dy = 0;
 }
 
 #endif // FARGAN_RX

@@ -190,6 +190,10 @@ function renderAudioStatus(s) {
 let mixerSig = '';
 // The neural receiver is receive-only, so this checkbox only changes what this
 // station hears.  Hidden entirely when the build left it out.
+//
+// The synthesis runs on its own thread, so the useful thing to show is whether
+// that thread is keeping up: frames still queued, frames it has finished, and
+// whether anything was dropped or the audio path ever found the queue empty.
 function renderFargan(s) {
   const box = $('fargan');
   if (!box) return;
@@ -198,6 +202,16 @@ function renderFargan(s) {
   if (!f.compiled) { if (row) row.style.display = 'none'; return; }
   if (row) row.style.display = '';
   if (document.activeElement !== box) box.checked = !!f.on;
+
+  const st = $('farganstat');
+  if (!st) return;
+  if (!f.on) { st.textContent = ''; return; }
+  const r = (s && s.fargan_rx) || {};
+  const decoded = r.decoded || 0, queued = r.queued || 0;
+  const dropped = r.dropped || 0, dry = r.dry || 0;
+  st.textContent = 'decoded ' + decoded + ' frames, ' + Math.max(0, queued - decoded) +
+                   ' waiting, ' + dropped + ' dropped, ' + dry + ' starved';
+  st.style.color = (dropped || dry) ? 'var(--amber)' : 'var(--dim)';
 }
 
 // Bluetooth audio.  The state carries the list the "bt" command cached, so the

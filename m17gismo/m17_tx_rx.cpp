@@ -164,12 +164,27 @@ static void m17_tx_lead_in_to_net(void)  { m17_tx_lead_in_ex(true); }
 void m17_txrx_spkr_audio( uint8_t *data ){
 
    // Receive-only option: the same 8-byte Codec2 3200 frame, synthesised by
-   // FARGAN instead of the sinusoidal model, then decimated back to the audio
-   // path's 8 kHz.  The frame is untouched, so the station at the other end
-   // cannot tell which synthesiser is in use here.
-   if (fargan_rx_enabled()) fargan_decode_to_8k(data, m_aspksamples);
-   else                     codec2_decode(m_codec2, m_aspksamples, data);
+   // FARGAN instead of the sinusoidal model.  The frame is untouched, so the
+   // station at the other end cannot tell which synthesiser is in use here.
+   //
+   // The synthesis costs about half a Pi 4 core and this runs on the radio
+   // thread and on the reflector thread, so it is done elsewhere: the frame is
+   // queued and whatever finished audio is ready is played.  Nothing is waiting
+   // for the vocoder - a frame or two of latency is the price, which matters far
+   // less than the demodulator falling behind.
+   static int16_t last[320];          // zeros until the first block arrives
+   if (fargan_rx_enabled()) {
+      int16_t block[160];
+      fargan_rx_push(data);
+      if (fargan_rx_pull(block)) memcpy(last, block, sizeof(block));
+      // If nothing is ready yet - the first frames after switching on - keep the
+      // audio stream fed with the previous block rather than dropping to silence.
+      audio_output(last, m_nsam);
+      return;
+   }
 
+   codec2_decode(m_codec2, m_aspksamples, data);
+   memcpy(last, m_aspksamples, sizeof(int16_t) * (m_nsam < 320 ? m_nsam : 320));
    audio_output(m_aspksamples, m_nsam);
 }
 

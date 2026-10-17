@@ -251,6 +251,16 @@ static void build_state(char *out, int len) {
     o = json_add(out, len, o, ",\"fargan\":{\"compiled\":%s,\"on\":%s}",
                  fargan_rx_compiled() ? "true" : "false",
                  fargan_rx_enabled() ? "true" : "false");
+    {
+        // The synthesis thread's health: frames queued and decoded, how many
+        // were dropped because it could not keep up, and how many times the
+        // audio path found nothing ready.  All three stay at zero when it is
+        // keeping pace, which is the whole question on a Pi.
+        unsigned long fq = 0, fd = 0, fdrop = 0, fdry = 0;
+        fargan_rx_stats(&fq, &fd, &fdrop, &fdry);
+        o = json_add(out, len, o, ",\"fargan_rx\":{\"queued\":%lu,\"decoded\":%lu,"
+                     "\"dropped\":%lu,\"dry\":%lu}", fq, fd, fdrop, fdry);
+    }
     // What Bluetooth knows, from the cache the "bt" command refreshes - this
     // runs on the radio's thread and must never shell out.
     o = json_add(out, len, o, ",\"bt\":{\"available\":%s,\"why\":\"%s\",\"adapter\":\"%s\",\"powered\":%s,"
