@@ -1,0 +1,26 @@
+Vendored from https://github.com/M17-Project/Codec2-mod-neural
+commit 1c32682ebff7a853eb3767866140b0481f54cd27 (2026-10-17)
+License: LGPL-2.1 (see LICENSE); third_party/opus is BSD-3-Clause (Xiph.Org)
+
+The neural decoder is Wojciech Kaczmarski SP5WWP's work, an M17 Project
+component: FARGAN synthesis for the Codec2 3200 bitstream.  FARGAN itself comes
+from Opus (Xiph.Org Foundation) and Codec2 from David Rowe VK5DGR.
+
+FARGAN synthesis for the Codec2 3200 bitstream: the same 8-byte frames the
+station already carries, decoded to 16 kHz speech instead of 8 kHz.  It is
+receive-only - the encoder, the frame format and the transmitted bits are
+untouched, so a station that switches this on still interoperates with every
+other M17 station.
+
+This library needs the modified Codec2 vendored next door in ../codec2mod, which
+it uses for the parameter decoding; it has no build system of its own, so
+m17gismo/makefile compiles both (see the FARGAN section there).
+
+Only include/, src/, model/ and third_party/ are vendored: the upstream tests/,
+tools/ and training/ directories are not needed to receive.  The PyTorch
+checkpoint is published in the upstream GitHub releases and is not required.
+
+Evaluated before integration, on the station's own Pi 4B: 9.6 ms per 20 ms frame,
+48% of one core, 2.1x real time, and the 8 kHz decimation costs 0.017 ms.  The
+harness, the raw output and the integration notes are in
+/mnt/hf/shared/projects/m17_neural (RESULTS.md, docs/PLAN.md).

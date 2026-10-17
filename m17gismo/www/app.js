@@ -126,6 +126,7 @@ function applyState(s) {
   renderMode(s);
   renderMixer(s);
   renderBt(s);
+  renderFargan(s);
   $('simrow').style.display = (s.radio === 'sim') ? 'flex' : 'none';
 }
 
@@ -187,6 +188,18 @@ function renderAudioStatus(s) {
 // set of them changes, and a value is not written back while its own slider has
 // focus - the state stream runs continuously and would fight a drag.
 let mixerSig = '';
+// The neural receiver is receive-only, so this checkbox only changes what this
+// station hears.  Hidden entirely when the build left it out.
+function renderFargan(s) {
+  const box = $('fargan');
+  if (!box) return;
+  const f = (s && s.fargan) || {};
+  const row = box.closest('.row');
+  if (!f.compiled) { if (row) row.style.display = 'none'; return; }
+  if (row) row.style.display = '';
+  if (document.activeElement !== box) box.checked = !!f.on;
+}
+
 // Bluetooth audio.  The state carries the list the "bt" command cached, so the
 // dialog only ever renders: opening it asks the station for a refresh, and the
 // next state message fills it in.  Nothing here runs per state message.

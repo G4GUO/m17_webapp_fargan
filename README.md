@@ -34,6 +34,32 @@ serial console, not the receiver - never set the port speed, and its GNSS
 encoder predated the specification 2.0 layout.  It has been rewritten; see
 "GPS: the station's position, and the Maidenhead locator" below.
 
+## The neural receiver (FARGAN)
+
+An optional, **receive-only** upgrade to the voice decoder.  M17 carries Codec2
+3200, and [Codec2-mod-neural](https://github.com/M17-Project/Codec2-mod-neural)
+by **Wojciech Kaczmarski SP5WWP** replaces only the *synthesis* step: the same
+8-byte frames, decoded by FARGAN (the vocoder from Opus) at 16 kHz instead of by
+the sinusoidal model at 8 kHz.  The bitstream, the transmitter and what other
+stations receive are untouched, so a station can have this for itself without
+anyone else changing anything - and it is not infectious: to hear it, the
+station receiving has to have it.
+
+    fargan          is it built in, and is it on
+    fargan on       receive through FARGAN (kept in config.txt)
+    fargan off      the classic decoder
+
+There is a checkbox in the Audio card as well.  It is compiled in with
+`NEURAL=1` (the default; needs `CODEC2_BACKEND=mod`) and left out entirely with
+`NEURAL=0`.  It starts **off**, and a station's choice is kept in `config.txt`.
+
+It is not free.  Measured on this station's Pi 4B: **9.6 ms per 20 ms frame -
+48 % of one core, 2.1x real time** - against 0.089 ms (0.44 %) for the classic
+decoder, so on a Pi it is a deliberate choice rather than a default.  The 320
+samples FARGAN produces are decimated back to the audio path's 160, which costs
+0.017 ms per frame.  The harness, the raw runs and the integration notes are in
+`/mnt/hf/shared/projects/m17_neural` (`RESULTS.md`, `docs/PLAN.md`).
+
 Nothing in `m17_*.cpp`, `pluto.cpp`, `lime.cpp`, `buffers.cpp` was rewritten for
 the web UI.  Small additive changes only: a reflector-module
 getter, gain/name/type getters, a `radio_keyed()` fix (upstream always called

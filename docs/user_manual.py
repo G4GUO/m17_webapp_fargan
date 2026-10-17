@@ -554,6 +554,10 @@ def build(path: str) -> None:
         ["bt scan", "Look for Bluetooth devices for 20 seconds."],
         ["bt off", "Put the audio back on the Pi sound card."],
         ["lead 4", "Blank codec frames sent before the voice - see section 7."],
+        ["fargan", "The neural receiver: whether FARGAN is built in, and whether it is on."],
+        ["fargan on", "Receive through FARGAN at 16 kHz instead of the classic decoder. Costs about "
+                      "half the Pi's CPU, and is remembered for the next start."],
+        ["fargan off", "Back to the classic decoder."],
         ["gps", "Show the GPS receiver, the fix and your locator. <b>gps /dev/ttyACM1 38400</b> uses a "
                 "different receiver."],
         ["gps meta off", "Stop sending your position to other stations; <b>gps meta on</b> starts again. The "
@@ -673,6 +677,11 @@ def build(path: str) -> None:
            "<b>help</b> in the Station panel lists every command.")
 
     # --------------------------------------------------------------- 13. credits
+    m.p("The optional neural receiver is <b>Wojciech Kaczmarski SP5WWP</b>'s "
+        "Codec2-mod-neural project, which synthesises the same Codec2 3200 frames with FARGAN - "
+        "the vocoder from the Opus codec, by Xiph.Org Foundation - instead of the classic "
+        "sinusoidal decoder. Codec2 itself is David Rowe VK5DGR's.")
+
     m.h1("13. Where this came from, and further reading")
     m.p("m17web is a modification of <b>G4GUO/m17_sdr</b>, with the original terminal interface "
         "replaced by the web page described here. The M17 protocol it speaks is an open standard "

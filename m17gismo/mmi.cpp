@@ -5,6 +5,7 @@
 #include "m17defines.h"
 #include "audio.h"
 #include "bluetooth.h"
+#include "fargan.h"
 #ifdef HAVE_SIM
 #include "radio_sim.h"
 #endif
@@ -429,6 +430,37 @@ void mmi_parse(char *cmd){
 		if(nt == 2){
 			bool on = (strncmp(token[1],"on",2)==0)||(strncmp(token[1],"all",3)==0);
 			m17_txrx_listen_all(on);
+			valid = true;
+		}
+	}
+
+	// The neural receiver: M17-Project/Codec2-mod-neural replaces only the
+	// receiver's synthesis step, so the same 8-byte Codec2 3200 frames come back
+	// at 16 kHz instead of 8 kHz.  The bitstream, the transmitter and every other
+	// station are untouched, and it costs about half a core of the Pi while
+	// receiving - hence a setting rather than the default.
+	//
+	//   fargan          is it built in, and is it on
+	//   fargan on       receive through FARGAN (16 kHz, decimated to the audio path)
+	//   fargan off      back to the classic decoder
+	if(strncmp(token[0],"fargan",6)==0){
+		if(nt == 1){
+			if(!fargan_rx_compiled())
+				gui_cmd_resp("neural receiver not built in (make NEURAL=1 CODEC2_BACKEND=mod)");
+			else
+				gui_cmd_resp(fargan_rx_enabled() ? "neural receiver on: FARGAN synthesises received frames"
+				                                 : "neural receiver off: the classic decoder");
+			valid = true;
+		} else if(nt == 2 && (strncmp(token[1],"on",2)==0 || strncmp(token[1],"off",3)==0)){
+			bool on = (strncmp(token[1],"on",2)==0);
+			if(on && !fargan_rx_compiled()){
+				gui_cmd_resp("neural receiver not built in (make NEURAL=1 CODEC2_BACKEND=mod)");
+			} else {
+				fargan_rx_set(on);
+				save_line_to_config("fargan", on ? "fargan on" : "fargan off");
+				gui_cmd_resp(on ? "neural receiver on: FARGAN at 16 kHz, decimated to the audio path"
+				                : "neural receiver off: the classic decoder");
+			}
 			valid = true;
 		}
 	}

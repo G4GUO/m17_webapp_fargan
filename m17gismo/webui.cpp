@@ -20,6 +20,7 @@
 #include <stdarg.h>
 #include <signal.h>
 #include <unistd.h>
+#include "fargan.h"
 #include <time.h>
 #include <ctype.h>
 #include <pthread.h>
@@ -245,6 +246,11 @@ static void build_state(char *out, int len) {
                  (audio_get_backend() == AUDIO_ALSA && audio_local_ready()) ? "true" : "false",
                  audio_local_device(),
                  (audio_get_backend() == AUDIO_ALSA) ? audio_backend_error() : "");
+    // The neural receiver: receive-only, so this says what this station does with
+    // what it hears, not anything about what other stations will hear.
+    o = json_add(out, len, o, ",\"fargan\":{\"compiled\":%s,\"on\":%s}",
+                 fargan_rx_compiled() ? "true" : "false",
+                 fargan_rx_enabled() ? "true" : "false");
     // What Bluetooth knows, from the cache the "bt" command refreshes - this
     // runs on the radio's thread and must never shell out.
     o = json_add(out, len, o, ",\"bt\":{\"available\":%s,\"why\":\"%s\",\"adapter\":\"%s\",\"powered\":%s,"

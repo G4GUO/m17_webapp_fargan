@@ -166,6 +166,59 @@ LIBS      := $(filter-out -lcodec2,$(LIBS))
 EXTRA_OBJS = $(CODEC2_MOD_OBJS)
 endif
 
+# ---------------------------------------------------------------------------
+# FARGAN neural receiver (M17-Project/Codec2-mod-neural)
+#
+# The decoder is Wojciech Kaczmarski SP5WWP's M17 Project component; FARGAN
+# itself is from Opus (Xiph.Org Foundation, BSD-3-Clause).
+# ---------------------------------------------------------------------------
+# Receive-only: the same 8-byte Codec2 3200 frames the station already carries
+# are synthesised by FARGAN at 16 kHz instead of by the sinusoidal model at
+# 8 kHz, and decimated back to the audio path's 8 kHz.  The transmitter, the
+# bitstream and every other M17 station are untouched, so it is a per-station
+# option (config.txt "fargan on", or the checkbox in the Audio panel).
+#
+# It decodes the frames through the modified Codec2 it is vendored with, hence
+# the CODEC2_BACKEND=mod requirement: with stock libcodec2 linked in, its own
+# internal symbols (unpack, decode_Wo, ...) would answer these calls instead.
+#
+# Measured on the station's Pi 4B: 9.6 ms per 20 ms frame, 48% of one core,
+# 2.1x real time, worst frame 10.4 ms of a 20 ms budget.  Numbers and harness:
+# /mnt/hf/shared/projects/m17_neural/RESULTS.md
+NEURAL    ?= 1
+C2F_DIR    = c2fargan
+C2F_OPUS   = $(C2F_DIR)/third_party/opus
+C2F_SRCS   = $(C2F_DIR)/src/c2fargan.c $(C2F_DIR)/src/c2f_features.c \
+             $(C2F_DIR)/model/fargan_data.c \
+             $(C2F_OPUS)/dnn/fargan.c $(C2F_OPUS)/dnn/nnet.c \
+             $(C2F_OPUS)/dnn/nnet_default.c $(C2F_OPUS)/dnn/parse_lpcnet_weights.c
+C2F_OBJS   = $(C2F_SRCS:.c=.o)
+C2F_INC    = -I$(C2F_DIR) -I$(C2F_DIR)/include -I$(C2F_DIR)/src -I$(C2F_DIR)/model \
+             -I$(C2F_OPUS) -I$(C2F_OPUS)/dnn -I$(C2F_OPUS)/celt -I$(C2F_OPUS)/include \
+             -Icodec2mod -Icodec2mod/inc
+C2F_CFLAGS = -Wall -Wextra -O3 -DSUPPRESS_PERF_WARNINGS $(C2F_INC)
+
+ifneq (,$(filter x86_64 amd64 AMD64,$(shell uname -m)))
+  C2F_CFLAGS += -mavx2 -mfma
+endif
+
+# A stock libcodec2 build cannot answer the FARGAN sources' calls into the
+# modified codec's internals, so the option turns itself off rather than
+# failing the build - the sim and console builds stay usable either way.
+ifeq ($(NEURAL),1)
+  ifneq ($(CODEC2_BACKEND),mod)
+    NEURAL := 0
+    $(warning NEURAL=1 needs CODEC2_BACKEND=mod: building without the neural receiver)
+  endif
+endif
+
+ifeq ($(NEURAL),1)
+  CFLAGS   += -DFARGAN_RX $(C2F_INC)
+  CXXFLAGS += -DFARGAN_RX $(C2F_INC)
+  EXTRA_OBJS += $(C2F_OBJS)
+endif
+
+
 # Embed the web assets
 ifeq ($(EMBED),1)
 CXXFLAGS  += -DEMBED_WWW
@@ -202,6 +255,15 @@ $(TARGET): $(GENERATED) $(OBJS) $(EXTRA_OBJS)
 codec2mod/%.o: codec2mod/%.c
 	$(CC) $(CODEC2_MOD_CFLAGS) -c $< -o $@
 
+# The vendored FARGAN sources.  Their own flags, because -O3 is worth a lot on
+# this code, and because they call the modified Codec2's internals by their real
+# names instead of being renamed like it.
+$(C2F_DIR)/%.o: $(C2F_DIR)/%.c
+	$(CC) $(C2F_CFLAGS) -c $< -o $@
+
+$(C2F_OPUS)/dnn/%.o: $(C2F_OPUS)/dnn/%.c
+	$(CC) $(C2F_CFLAGS) -c $< -o $@
+
 # Compare the vendored modified Codec2 against the stock libcodec2.
 #
 # Two separate binaries, one codec each, on purpose: libcodec2 exports internal
@@ -237,6 +299,7 @@ clean:
 	rm -f $(TARGET) *.o www_assets.h
 	rm -f tests/codec2_frame_stock tests/codec2_frame_mod
 	rm -f codec2mod/*.o codec2mod/src/*.o
+	rm -f $(C2F_OBJS)
 
 help:
 	@echo "make            web UI, all available radio and audio back ends"
@@ -245,4 +308,5 @@ help:
 	@echo "make bitexact-check INPUT=file.raw   modified vs stock Codec2 comparison"
 	@echo "options: PULSE=0 PLUTO=0 LIME=0 SIM=1 CONSOLE=1 WEB=0 EMBED=0 DEBUG=1"
 	@echo "         CODEC2_BACKEND=mod   (use the vendored modified Codec2)"
+	@echo "         NEURAL=0             (leave the FARGAN neural receiver out)"
 	@echo "run:     ./$(TARGET) -r sim -w 8080"

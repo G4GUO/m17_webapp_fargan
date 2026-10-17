@@ -158,6 +158,11 @@
         <span class="lbl" id="audiopending"></span>
       </div>
       <div class="row">
+        <label class="chk" title="Receive-only: FARGAN synthesis of the same Codec2 frames, at 16 kHz. Costs about half a Pi core.">
+          <input type="checkbox" id="fargan" onchange="cmd('fargan ' + (this.checked ? 'on' : 'off'))">
+          neural receiver (FARGAN)</label>
+      </div>
+      <div class="row">
         <button id="btopen">Bluetooth&hellip;</button>
         <span class="lbl" id="btstatus">no Bluetooth device selected</span>
       </div>

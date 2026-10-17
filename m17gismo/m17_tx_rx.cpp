@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <time.h>
 #include "m17defines.h"
+#include "fargan.h"   // receive-only neural synthesis; a stub unless FARGAN_RX
 // codec2 (or the modified codec through codec2mod/codec2_shim.h) is included by
 // m17defines.h according to CODEC2_BACKEND.
 
@@ -162,7 +163,13 @@ static void m17_tx_lead_in_to_net(void)  { m17_tx_lead_in_ex(true); }
 
 void m17_txrx_spkr_audio( uint8_t *data ){
 
-   codec2_decode(m_codec2, m_aspksamples, data);
+   // Receive-only option: the same 8-byte Codec2 3200 frame, synthesised by
+   // FARGAN instead of the sinusoidal model, then decimated back to the audio
+   // path's 8 kHz.  The frame is untouched, so the station at the other end
+   // cannot tell which synthesiser is in use here.
+   if (fargan_rx_enabled()) fargan_decode_to_8k(data, m_aspksamples);
+   else                     codec2_decode(m_codec2, m_aspksamples, data);
+
    audio_output(m_aspksamples, m_nsam);
 }
 

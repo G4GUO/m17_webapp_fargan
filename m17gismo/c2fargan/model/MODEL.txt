@@ -1,0 +1,4 @@
+checkpoint: fargan_adv_50.pth
+sha256:     3c3d60d69e949e516403f17a14741877820e1ac4707efc2982a7a440145f0759
+opus:       503d81b138d76621aae4b12786e90de48aa8db3a
+exported:   2026-10-17
