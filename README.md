@@ -58,7 +58,7 @@ It is not free.  Measured on this station's Pi 4B: **9.6 ms per 20 ms frame -
 decoder, so on a Pi it is a deliberate choice rather than a default.  The 320
 samples FARGAN produces are decimated back to the audio path's 160, which costs
 0.017 ms per frame.  The harness, the raw runs and the integration notes are in
-`/mnt/hf/shared/projects/m17_neural` (`RESULTS.md`, `docs/PLAN.md`).
+the measurement harness, `m17_neural` (`RESULTS.md`, `docs/PLAN.md`).
 
 ## Recording what you hear
 
