@@ -495,10 +495,12 @@ The console (and the **Bluetooth...** button in the Audio panel) drives it:
 
     bt                     what Bluetooth knows, and what is in use
     bt pair MAC            pair and trust a device a scan found
-    bt use MAC speaker     trust it, connect, and send the output to it
-    bt use MAC headset     ...as a headset, microphone included
+    bt spk MAC [a2dp|sco]  send the speaker output to that device
+    bt spk off             speaker back on the Pi sound card
+    bt mic MAC             take the microphone from that device (HFP)
+    bt mic off             microphone back on the Pi sound card
     bt scan                look for devices for 20 seconds
-    bt off                 back to the Pi sound card
+    bt off                 both directions back on the Pi sound card
 
 `bt use` writes itself into `config.txt` (as `btdev MAC ROLE`), so the choice
 survives a restart.  Details worth knowing:

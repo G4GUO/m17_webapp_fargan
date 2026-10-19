@@ -50,19 +50,35 @@ bool bt_paired(int i);                     // "Paired: yes" for that device
 const char *bt_adapter(void);              // "DC:A6:32:54:DF:63", "" if none
 bool bt_powered(void);
 
-// What the station has been told to use.
+// The two selections, kept apart: output can be an A2DP speaker while the
+// microphone stays on the sound card (or on a headset).  An empty MAC means the
+// sound card for that direction.
+const char *bt_out_mac(void);              // "" = the sound card
+const char *bt_out_profile(void);          // "a2dp" | "sco"
+const char *bt_out_name(void);
+bool bt_out_connected(void);
+const char *bt_in_mac(void);               // "" = the sound card
+const char *bt_in_name(void);
+bool bt_in_connected(void);
+
+// The old single-device view: "headset" is both directions on one device.
 const char *bt_active_mac(void);
-const char *bt_active_role(void);          // "speaker" | "headset" | ""
-const char *bt_active_name(void);          // as good as the cached list allows
+const char *bt_active_role(void);          // "headset" | "separate" | ""
+const char *bt_active_name(void);
 bool bt_active_connected(void);
 
-// ALSA device strings for the active choice.  Playback is always filled in;
-// capture only for a headset.  False when nothing Bluetooth is selected.
+// ALSA device strings for the two selections.  Each is filled in only when that
+// direction is on Bluetooth; an empty string means "whatever card is present".
 bool bt_alsa_devices(char *play, int playlen, char *cap, int caplen);
 
-// Remember a choice without touching any hardware: used by "bt use" after it
-// has asked for the connection, and by config.txt at startup.
-bool bt_set_active(const char *mac, const char *role);
+// Choose a direction.  A NULL/empty MAC puts that direction back on the card.
+bool bt_set_output(const char *mac, const char *profile);   // profile: a2dp|sco
+bool bt_set_input(const char *mac);
+bool bt_valid_profile(const char *p);
+
+// Remember a choice without touching any hardware: used by "bt spk"/"bt mic"
+// after they have asked for the connection, and by config.txt at startup.
+bool bt_set_active(const char *mac, const char *role);      // speaker|headset
 void bt_clear(void);
 
 // Both of these run in the background so the command that asked for them

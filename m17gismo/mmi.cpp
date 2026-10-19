@@ -512,30 +512,53 @@ void mmi_parse(char *cmd){
 		}
 	}
 
-	// Bluetooth audio: a speaker (A2DP, playback only - the microphone stays on
-	// the sound card) or a headset (HFP, both directions at M17's own 8 kHz,
-	// so nothing is lost against Codec2).  Both need bluealsa on the host; the
-	// station is unchanged without it and this says why.
+	// Bluetooth audio.  Output and microphone are chosen *separately*: an A2DP
+	// speaker for the sound while the microphone stays on the sound card, or a
+	// headset for one direction and another device for the other.
 	//
 	//   bt                    what is known, and what is in use
-	//   bt use MAC speaker    trust it, connect, send the audio to it
-	//   bt use MAC headset    ...as a headset, microphone included
-	//   bt scan               look for devices for 20 s
+	//   bt spk MAC            output through that device (A2DP)
+	//   bt spk MAC sco        output through it as HFP instead
+	//   bt spk off            output back to the sound card
+	//   bt mic MAC            microphone through that device (HFP)
+	//   bt mic off            microphone back to the sound card
+	//   bt use MAC speaker    the old form: output only
+	//   bt use MAC headset    the old form: both directions on that device
 	//   bt pair MAC           pair and trust a device the scan found
-	//   bt off                back to the sound card
-	//   btdev MAC ROLE        the config.txt form: remembers, does not connect
+	//   bt scan               look for devices for 20 s
+	//   bt off                both directions back to the sound card
+	//   btspk MAC [a2dp|sco]  the config.txt form: remembers, does not connect
+	//   btmic MAC             the config.txt form for the microphone
+	//   btdev MAC ROLE        the older config.txt form, still read
 	if(strncmp(token[0],"bt",2)==0){
-		if(strncmp(token[0],"btdev",5)==0){
-			char play[160], cap[160];
+		char play[160], cap[160];
+		char line[160];
+
+		if(strncmp(token[0],"btspk",5)==0 || strncmp(token[0],"btmic",5)==0){
+			// Startup forms.  No connection attempt: bluealsa reconnects to a
+			// trusted device itself, and a device that is not there leaves the
+			// audio on the card rather than going silent.
+			bool spk = (strncmp(token[0],"btspk",5) == 0);
+			if(nt == 2 && strncmp(token[1],"off",3) == 0){
+				if(spk) bt_set_output(NULL, NULL);
+				else    bt_set_input(NULL);
+			} else if(spk && (nt == 2 || nt == 3)){
+				bt_set_output(token[1], nt == 3 ? token[2] : "a2dp");
+			} else if(!spk && nt == 2){
+				bt_set_input(token[1]);
+			}
+			bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
+			audio_alsa_set_device(play);
+			if(cap[0]) audio_alsa_set_capture_device(cap);
+			else       audio_alsa_capture_follow_card();
+			valid = true;
+		} else if(strncmp(token[0],"btdev",5)==0){
 			if(nt == 2 && strncmp(token[1],"off",3)==0){
 				bt_clear();
 				audio_alsa_set_device("");
 				audio_alsa_set_capture_device("");
 				valid = true;
 			} else if(nt == 3 && bt_set_active(token[1], token[2])){
-				// Startup: no connection attempt here.  bluealsa reconnects to a
-				// trusted device itself, and if it is not there the audio falls
-				// back to the card instead of going silent.
 				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
 				audio_alsa_set_device(play);
 				if(cap[0]) audio_alsa_set_capture_device(cap);
@@ -543,7 +566,6 @@ void mmi_parse(char *cmd){
 				valid = true;
 			}
 		} else if(nt == 1){
-			char line[160];
 			if(!bt_available()){
 				gui_cmd_resp(bt_available_why());
 			} else {
@@ -551,17 +573,24 @@ void mmi_parse(char *cmd){
 				snprintf(line, sizeof(line), "adapter %s%s", bt_adapter(),
 				         bt_powered() ? "" : " (powered off)");
 				gui_cmd_resp(line);
-				if(bt_active_mac()[0])
-					snprintf(line, sizeof(line), "using %s %s%s", bt_active_role(),
-					         bt_active_name()[0] ? bt_active_name() : bt_active_mac(),
-					         bt_active_connected() ? "  (connected)" : "  (not connected)");
-				else
-					snprintf(line, sizeof(line), "using the sound card");
+				snprintf(line, sizeof(line), "speaker: %s%s",
+				         bt_out_mac()[0] ? (bt_out_name()[0] ? bt_out_name() : bt_out_mac())
+				                         : "the sound card",
+				         bt_out_mac()[0] ? (bt_out_connected() ? "  (connected)" : "  (not connected)")
+				                         : "");
+				gui_cmd_resp(line);
+				snprintf(line, sizeof(line), "microphone: %s%s",
+				         bt_in_mac()[0] ? (bt_in_name()[0] ? bt_in_name() : bt_in_mac())
+				                        : "the sound card",
+				         bt_in_mac()[0] ? (bt_in_connected() ? "  (connected)" : "  (not connected)")
+				                        : "");
 				gui_cmd_resp(line);
 				for(int i = 0; i < bt_count(); i++){
-					snprintf(line, sizeof(line), "%s  %s%s%s", bt_mac(i), bt_name(i),
+					snprintf(line, sizeof(line), "%s  %s%s%s%s%s", bt_mac(i), bt_name(i),
 					         bt_connected(i) ? "  (connected)" : "",
-					         bt_paired(i)    ? "" : "  (not paired)");
+					         bt_paired(i)    ? "" : "  (not paired)",
+					         strcmp(bt_out_mac(), bt_mac(i)) == 0 ? "  [speaker]" : "",
+					         strcmp(bt_in_mac(),  bt_mac(i)) == 0 ? "  [mic]" : "");
 					gui_cmd_resp(line);
 				}
 				if(bt_count() == 0) gui_cmd_resp("nothing known yet: bt scan looks for devices");
@@ -580,14 +609,14 @@ void mmi_parse(char *cmd){
 			audio_alsa_set_device("");
 			audio_alsa_set_capture_device("");
 			audio_set_backend(audio_parse_backend("alsa"));
-			save_line_to_config("btdev", "btdev off");
-			gui_cmd_resp("audio back on the sound card");
+			save_line_to_config("btspk", "btspk off");
+			save_line_to_config("btmic", "btmic off");
+			gui_cmd_resp("speaker and microphone back on the sound card");
 			valid = true;
 		} else if(nt == 3 && strncmp(token[1],"pair",4)==0){
 			// A device found by a scan is only discovered: nothing will connect
 			// it until it is paired, and a one-shot bluetoothctl registers no
-			// pairing agent unless it is asked for one.  Pair and trust here;
-			// choosing speaker or headset afterwards does the connect.
+			// pairing agent unless it is asked for one.
 			const char *mac = token[2];
 			if(!bt_valid_mac(mac)){
 				gui_cmd_resp("not a Bluetooth address (xx:xx:xx:xx:xx:xx)");
@@ -595,14 +624,58 @@ void mmi_parse(char *cmd){
 				gui_cmd_resp(bt_available_why());
 			} else if(bt_pair_sync(mac, 20)){
 				bt_refresh();
-				gui_cmd_resp("paired and trusted - now choose speaker or headset");
+				gui_cmd_resp("paired and trusted - now choose speaker or microphone");
 			} else {
 				gui_cmd_resp("pairing failed: the device may want a PIN, or be out of range");
 			}
 			valid = true;
+		} else if(nt >= 3 && (strncmp(token[1],"spk",3)==0 || strncmp(token[1],"mic",3)==0)){
+			// One direction at a time: "bt spk MAC" moves the speaker only, so
+			// the microphone can stay where it is (on the card, or on another
+			// device).  "bt spk MAC sco" asks for HFP instead of A2DP.
+			bool spk = (strncmp(token[1],"spk",3) == 0);
+			const char *mac = token[2];
+			if(nt == 2 || (nt == 3 && strncmp(mac,"off",3) == 0)){
+				if(spk){ bt_set_output(NULL, NULL); save_line_to_config("btspk", "btspk off"); }
+				else    { bt_set_input(NULL);       save_line_to_config("btmic", "btmic off"); }
+				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
+				audio_alsa_set_device(play);
+				if(cap[0]) audio_alsa_set_capture_device(cap);
+				else       audio_alsa_capture_follow_card();
+				gui_cmd_resp(spk ? "speaker back on the sound card" : "microphone back on the sound card");
+				valid = true;
+			} else if(!bt_valid_mac(mac)){
+				gui_cmd_resp("not a Bluetooth address (xx:xx:xx:xx:xx:xx)");
+			} else if(!bt_available()){
+				gui_cmd_resp(bt_available_why());
+			} else {
+				const char *prof = (nt == 4 && bt_valid_profile(token[3])) ? token[3] : "a2dp";
+				if(spk){ bt_set_output(mac, prof); }
+				else   { bt_set_input(mac); }
+				bool up = bt_connect_sync(mac, 12);
+				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
+				audio_alsa_set_device(play);
+				if(cap[0]) audio_alsa_set_capture_device(cap);
+				else       audio_alsa_capture_follow_card();
+				audio_set_backend(audio_parse_backend("alsa"));
+				bt_connect_async(mac);
+				if(spk){
+					snprintf(line, sizeof(line), "btspk %s %s", mac, prof);
+					save_line_to_config("btspk", line);
+					if(!up) gui_cmd_resp("the device did not answer yet; the audio will move when it does");
+					else    gui_cmd_resp(prof[0] == 's' ? "speaker: HFP output (8 kHz)"
+					                                   : "speaker: A2DP output (the microphone stays where it is)");
+				} else {
+					snprintf(line, sizeof(line), "btmic %s", mac);
+					save_line_to_config("btmic", line);
+					if(!up) gui_cmd_resp("the device did not answer yet; the microphone will move when it does");
+					else    gui_cmd_resp("microphone: through the headset (HFP, 8 kHz)");
+				}
+				valid = true;
+			}
 		} else if(nt == 3 || (nt == 4 && strncmp(token[1],"use",3) == 0)){
-			// "bt <mac> speaker" and "bt use <mac> speaker" are both accepted.
-			char play[160], cap[160], line[96];
+			// "bt <mac> speaker" and "bt use <mac> speaker" are both accepted,
+			// and are the shorthand for "put this direction on this device".
 			const char *mac  = token[nt - 2];
 			const char *role = token[nt - 1];
 			if(!bt_valid_mac(mac)){
@@ -612,21 +685,26 @@ void mmi_parse(char *cmd){
 			} else if(!bt_set_active(mac, role)){
 				gui_cmd_resp("the role is speaker or headset");
 			} else {
-				// Connect first: bluealsa only creates the PCM once the
-				// profile is up, and pointing the audio at a PCM that is not
-				// there yet would just fall back to the sound card.
 				bool up = bt_connect_sync(mac, 12);
 				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
 				audio_alsa_set_device(play);
 				if(cap[0]) audio_alsa_set_capture_device(cap);
 				else       audio_alsa_capture_follow_card();
 				audio_set_backend(audio_parse_backend("alsa"));
-				bt_connect_async(mac);   // and keep it connected from now on
-				if(!up) gui_cmd_resp("the device did not answer; the audio stays on the sound card");
-				snprintf(line, sizeof(line), "btdev %s %s", mac, role);
-				save_line_to_config("btdev", line);
-				gui_cmd_resp(cap[0] ? "headset: talk and listen through it (HFP, 8 kHz)"
-				                    : "speaker: the microphone stays on the sound card");
+				bt_connect_async(mac);
+				if(!up) gui_cmd_resp("the device did not answer; the audio stays where it was");
+				if(strcmp(role,"speaker") == 0){
+					snprintf(line, sizeof(line), "btspk %s a2dp", mac);
+					save_line_to_config("btspk", line);
+				} else {
+					snprintf(line, sizeof(line), "btspk %s sco", mac);
+					save_line_to_config("btspk", line);
+					snprintf(line, sizeof(line), "btmic %s", mac);
+					save_line_to_config("btmic", line);
+				}
+				gui_cmd_resp(strcmp(role,"headset") == 0
+				             ? "headset: talk and listen through it (HFP, 8 kHz)"
+				             : "speaker: the microphone stays where it is");
 				valid = true;
 			}
 		}

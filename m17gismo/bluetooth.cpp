@@ -1,23 +1,30 @@
 // bluetooth.cpp
 //
-// Bluetooth audio: choosing a speaker or headset and putting it into the audio
-// path.  See bluetooth.h for what this is and why it is optional.
+// Bluetooth audio: choosing a speaker and a microphone and putting them into
+// the audio path.  See bluetooth.h for what this is and why it is optional.
 //
 // The work is all in the ALSA device strings - BlueALSA has already turned the
 // Bluetooth device into a PCM that the ALSA back end can open.  Everything that
 // touches the radio or the Bluetooth daemon goes through bluetoothctl, which is
 // why every MAC address is validated before it reaches a command line.
 //
-// Two things here are not obvious.  A device that has been *discovered* is not
-// a device that can be *connected*: BlueZ will not connect an unpaired device
-// on behalf of a one-shot command, and bluetoothctl registers no pairing agent
-// unless it is asked to - so bt_connect_sync() pairs first (with a NoInputNoOutput
-// agent, which is what a "Just Works" speaker needs) when "Paired: no".  And the
-// connected flag cannot be read from the Bluetooth daemon on every state message:
-// the state goes out several times a second and every bluetoothctl call is a
-// D-Bus round trip.  A small monitor thread polls the cheap question ("which
-// devices are connected") a few times a second-free interval and rebuilds the
-// whole list now and then, so the UI cannot sit on a stale "connected".
+// Output and input are chosen *separately*.  A2DP is playback only, so a speaker
+// used for output leaves the microphone on the sound card (or on another
+// device); HFP carries both directions, so a headset can be the output, the
+// input, or both.  A single device with a single "role" could not express
+// "SoundCore for sound, BH-M10B for the microphone", which is a normal thing to
+// want - and it is why the two selections are kept apart here.
+//
+// Two further things are not obvious.  A device that has been *discovered* is
+// not a device that can be *connected*: BlueZ will not connect an unpaired
+// device on behalf of a one-shot command, and bluetoothctl registers no pairing
+// agent unless it is asked to - so the connect path pairs first (with a
+// NoInputNoOutput agent, which is what a "Just Works" speaker needs) when
+// "Paired: no".  And the connected flag cannot be read from the Bluetooth daemon
+// on every state message: the state goes out several times a second and every
+// bluetoothctl call is a D-Bus round trip.  A small monitor thread polls the
+// cheap question and rebuilds the whole list now and then, so the UI cannot sit
+// on a stale "connected".
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -46,8 +53,10 @@ static bool m_powered;
 static bt_dev_t m_dev[BT_MAX_DEV];
 static int      m_count;
 
-static char m_active_mac[BT_MAC_LEN];
-static char m_active_role[12];
+// The two selections.  An empty mac means "the sound card" for that direction.
+static char m_out_mac[BT_MAC_LEN];
+static char m_out_prof[6];                 // "a2dp" | "sco"
+static char m_in_mac[BT_MAC_LEN];
 
 // Serialises the bluetoothctl calls.  The monitor thread and the command thread
 // both make them, and two concurrent pairs or connects fight each other.  The
@@ -94,37 +103,62 @@ bool bt_connected(int i)   { return (i >= 0 && i < m_count) ? m_dev[i].conn : fa
 bool bt_paired(int i)      { return (i >= 0 && i < m_count) ? m_dev[i].paired : false; }
 const char *bt_adapter(void) { return m_adapter; }
 bool bt_powered(void) { return m_powered; }
-const char *bt_active_mac(void)  { return m_active_mac; }
-const char *bt_active_role(void) { return m_active_role; }
 
-const char *bt_active_name(void) {
+static const char *name_for(const char *mac) {
+    if (!mac || !mac[0]) return "";
     for (int i = 0; i < m_count; i++)
-        if (strcmp(m_dev[i].mac, m_active_mac) == 0) return m_dev[i].name;
+        if (strcmp(m_dev[i].mac, mac) == 0) return m_dev[i].name;
     return "";
 }
 
-// The cached flag, refreshed by the monitor thread.  This is in the state,
-// which is sent many times a second, so it must not run anything.
-bool bt_active_connected(void) {
-    if (!m_active_mac[0]) return false;
+static bool conn_for(const char *mac) {
+    if (!mac || !mac[0]) return false;
     for (int i = 0; i < m_count; i++)
-        if (strcmp(m_dev[i].mac, m_active_mac) == 0) return m_dev[i].conn;
+        if (strcmp(m_dev[i].mac, mac) == 0) return m_dev[i].conn;
+    return false;
+}
+
+const char *bt_out_mac(void)     { return m_out_mac; }
+const char *bt_out_profile(void) { return m_out_prof; }
+const char *bt_out_name(void)    { return name_for(m_out_mac); }
+bool bt_out_connected(void)      { return conn_for(m_out_mac); }
+const char *bt_in_mac(void)      { return m_in_mac; }
+const char *bt_in_name(void)     { return name_for(m_in_mac); }
+bool bt_in_connected(void)       { return conn_for(m_in_mac); }
+
+// The old single-device view, kept because the console listing and the manual
+// still talk in those terms: "headset" is both directions on one device.
+const char *bt_active_mac(void)  { return m_out_mac[0] ? m_out_mac : m_in_mac; }
+const char *bt_active_role(void) {
+    if (m_out_mac[0] && m_in_mac[0] && strcmp(m_out_mac, m_in_mac) == 0) return "headset";
+    if (m_out_mac[0] || m_in_mac[0]) return "separate";
+    return "";
+}
+const char *bt_active_name(void) { return name_for(bt_active_mac()); }
+bool bt_active_connected(void) {
+    if (m_out_mac[0]) return conn_for(m_out_mac);
+    if (m_in_mac[0])  return conn_for(m_in_mac);
     return false;
 }
 
 bool bt_alsa_devices(char *play, int playlen, char *cap, int caplen) {
-    if (!m_active_mac[0] || !m_active_role[0]) return false;
-    bool headset = (strcmp(m_active_role, "headset") == 0);
-    if (play && playlen > 0)
-        snprintf(play, playlen, "bluealsa:DEV=%s,PROFILE=%s",
-                 m_active_mac, headset ? "sco" : "a2dp");
-    if (cap && caplen > 0) {
-        if (headset)
-            snprintf(cap, caplen, "bluealsa:DEV=%s,PROFILE=sco", m_active_mac);
-        else
-            cap[0] = 0;   // A2DP is playback only: the sound card keeps the mic
+    bool any = false;
+    if (play && playlen > 0) {
+        play[0] = 0;
+        if (m_out_mac[0]) {
+            snprintf(play, playlen, "bluealsa:DEV=%s,PROFILE=%s", m_out_mac,
+                     (m_out_prof[0] ? m_out_prof : "a2dp"));
+            any = true;
+        }
     }
-    return true;
+    if (cap && caplen > 0) {
+        cap[0] = 0;
+        if (m_in_mac[0]) {
+            snprintf(cap, caplen, "bluealsa:DEV=%s,PROFILE=sco", m_in_mac);
+            any = true;
+        }
+    }
+    return any;
 }
 
 bool bt_valid_mac(const char *s) {
@@ -139,17 +173,50 @@ bool bt_valid_mac(const char *s) {
     return true;
 }
 
-bool bt_set_active(const char *mac, const char *role) {
-    if (!bt_valid_mac(mac)) return false;
-    if (strcmp(role, "speaker") != 0 && strcmp(role, "headset") != 0) return false;
-    snprintf(m_active_mac, sizeof(m_active_mac), "%s", mac);
-    snprintf(m_active_role, sizeof(m_active_role), "%s", role);
+bool bt_valid_profile(const char *p) {
+    return p && (strcmp(p, "a2dp") == 0 || strcmp(p, "sco") == 0);
+}
+
+bool bt_set_output(const char *mac, const char *profile) {
+    if (mac && mac[0]) {
+        if (!bt_valid_mac(mac)) return false;
+        if (!bt_valid_profile(profile)) return false;
+        snprintf(m_out_mac, sizeof(m_out_mac), "%s", mac);
+        snprintf(m_out_prof, sizeof(m_out_prof), "%s", profile);
+    } else {
+        m_out_mac[0] = 0;
+        m_out_prof[0] = 0;
+    }
     return true;
 }
 
+bool bt_set_input(const char *mac) {
+    if (mac && mac[0]) {
+        if (!bt_valid_mac(mac)) return false;
+        snprintf(m_in_mac, sizeof(m_in_mac), "%s", mac);
+    } else {
+        m_in_mac[0] = 0;
+    }
+    return true;
+}
+
+// "bt use MAC speaker|headset": speaker is the output only (A2DP), headset is
+// both directions on that device (HFP).
+bool bt_set_active(const char *mac, const char *role) {
+    if (!bt_valid_mac(mac)) return false;
+    if (strcmp(role, "speaker") == 0) {
+        return bt_set_output(mac, "a2dp");
+    }
+    if (strcmp(role, "headset") == 0) {
+        return bt_set_output(mac, "sco") && bt_set_input(mac);
+    }
+    return false;
+}
+
 void bt_clear(void) {
-    m_active_mac[0] = 0;
-    m_active_role[0] = 0;
+    m_out_mac[0] = 0;
+    m_out_prof[0] = 0;
+    m_in_mac[0] = 0;
 }
 
 // ---------------------------------------------------------------- the tools
@@ -285,17 +352,17 @@ void bt_poll_connected(void) {
                 if (strcmp(m_dev[d].mac, mac) == 0) conn[d] = true;
         }
         for (int d = 0; d < m_count; d++) {
-            if (strcmp(m_dev[d].mac, m_active_mac) == 0 && m_dev[d].conn != conn[d]) {
-                // The device in use has come up (or gone away).  The audio
-                // streams were opened when it was not there - or are still on
-                // it - so ask for a re-open; with no sound card there is nothing
-                // else to fall back to, and the station must not sit silent
-                // until someone restarts it.
-                m_dev[d].conn = conn[d];
-                audio_request_reopen();
-                continue;
-            }
+            bool changed = (m_dev[d].conn != conn[d]);
             m_dev[d].conn = conn[d];
+            if (changed && (strcmp(m_dev[d].mac, m_out_mac) == 0 ||
+                            strcmp(m_dev[d].mac, m_in_mac)  == 0)) {
+                // A device in use has come up (or gone away).  The audio streams
+                // were opened when it was not there - or are still on it - so ask
+                // for a re-open; with no sound card there is nothing else to fall
+                // back to, and the station must not sit silent until someone
+                // restarts it.
+                audio_request_reopen();
+            }
         }
     }
     pthread_mutex_unlock(&m_lock);
@@ -402,7 +469,7 @@ static void *monitor_thread(void *arg) {
 void bt_start_monitor(void) {
     if (!bt_available()) return;
     // Fill the list before the first state message goes out, or the UI shows
-    // "nothing known yet" (and the active device as a bare MAC) until the
+    // "nothing known yet" (and the selected devices as bare MACs) until the
     // first timer refresh half a minute later.
     bt_refresh();
     pthread_t t;

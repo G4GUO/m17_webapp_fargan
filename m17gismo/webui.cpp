@@ -273,17 +273,24 @@ static void build_state(char *out, int len) {
                      rec_active() ? "true" : "false", rec_file(), rec_rate(), rsec, rs, rec_error());
     }
     // What Bluetooth knows, from the cache the "bt" command refreshes - this
-    // runs on the radio's thread and must never shell out.
+    // runs on the radio's thread and must never shell out.  Output and input are
+    // reported separately: they are chosen separately, and one may be the sound
+    // card while the other is Bluetooth.
     o = json_add(out, len, o, ",\"bt\":{\"available\":%s,\"why\":\"%s\",\"adapter\":\"%s\",\"powered\":%s,"
-                 "\"role\":\"%s\",\"active\":\"%s\",\"active_name\":\"%s\",\"connected\":%s,\"devices\":[",
+                 "\"out\":{\"mac\":\"%s\",\"name\":\"%s\",\"profile\":\"%s\",\"connected\":%s},"
+                 "\"in\":{\"mac\":\"%s\",\"name\":\"%s\",\"connected\":%s},\"devices\":[",
                  bt_available() ? "true" : "false", bt_available_why(), bt_adapter(),
-                 bt_powered() ? "true" : "false", bt_active_role(), bt_active_mac(),
-                 bt_active_name(), bt_active_connected() ? "true" : "false");
+                 bt_powered() ? "true" : "false",
+                 bt_out_mac(), bt_out_name(), bt_out_profile(),
+                 bt_out_connected() ? "true" : "false",
+                 bt_in_mac(), bt_in_name(), bt_in_connected() ? "true" : "false");
     for(int i = 0; i < bt_count(); i++)
-        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s,\"paired\":%s}",
+        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s,\"paired\":%s,\"out\":%s,\"in\":%s}",
                      i ? "," : "", bt_mac(i), bt_name(i), bt_icon(i),
                      bt_connected(i) ? "true" : "false",
-                     bt_paired(i) ? "true" : "false");
+                     bt_paired(i) ? "true" : "false",
+                     strcmp(bt_out_mac(), bt_mac(i)) == 0 ? "true" : "false",
+                     strcmp(bt_in_mac(),  bt_mac(i)) == 0 ? "true" : "false");
     o = json_add(out, len, o, "]}");
     o = json_add(out, len, o, ",\"mic_level\":%.3f,\"spk_level\":%.3f",
                  audio_get_mic_level(), audio_get_spk_level());

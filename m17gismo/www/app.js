@@ -243,6 +243,11 @@ function renderRecord(s) {
 // Bluetooth audio.  The state carries the list the "bt" command cached, so the
 // dialog only ever renders: opening it asks the station for a refresh, and the
 // next state message fills it in.  Nothing here runs per state message.
+//
+// Output and microphone are separate selections.  A device row offers "speaker"
+// and "mic" independently, so a speaker can carry the sound while a headset
+// carries the microphone; pressing a button that is already lit puts that one
+// direction back on the sound card.
 let btSig = '';
 function renderBt(s) {
   const b = (s && s.bt) || {};
@@ -257,20 +262,23 @@ function renderBt(s) {
   }
   open.disabled = false;
   const a = (s && s.alsa) || {};
-  const onBt = !!(a.device && String(a.device).indexOf('bluealsa:') === 0);
-  if (b.active) {
-    let txt = b.role + ': ' + (b.active_name || b.active);
-    if (!b.connected) txt += ' (not connected)';
-    else if (!onBt) txt += ' (connected, but the audio is on the sound card)';
-    else txt += ' (connected)';
-    st.textContent = txt;
-    st.style.color = (b.connected && onBt) ? 'var(--green)' : 'var(--amber)';
-  } else {
-    st.textContent = 'no Bluetooth device selected';
-    st.style.color = 'var(--dim)';
-  }
+  const o = b.out || {}, i = b.in || {};
+  const onBt = (mac) => !!(mac && a.device && String(a.device).indexOf('bluealsa:DEV=' + mac) === 0);
+  let sp = o.mac
+    ? ('speaker: ' + (o.name || o.mac) + (o.profile === 'sco' ? ' (HFP)' : ' (A2DP)'))
+    : 'speaker: sound card';
+  if (o.mac && !o.connected) sp += ' (not connected)';
+  else if (o.mac && !onBt(o.mac)) sp += ' (audio on the card)';
+  let mi = i.mac ? ('mic: ' + (i.name || i.mac)) : 'mic: sound card';
+  if (i.mac && !i.connected) mi += ' (not connected)';
+  st.textContent = sp + ' \u00b7 ' + mi;
+  st.style.color = ((!o.mac || o.connected) && (!i.mac || i.connected))
+    ? 'var(--green)' : 'var(--amber)';
+
   const devs = b.devices || [];
-  const sig = devs.map(d => d.mac + (d.connected ? '1' : '0') + (d.paired ? 'p' : 'u')).join('|') + '#' + (b.active || '');
+  const sig = devs.map(d => d.mac + (d.connected ? '1' : '0') + (d.paired ? 'p' : 'u') +
+      (d.out ? 'O' : '-') + (d.in ? 'I' : '-')).join('|') +
+    '#' + (o.mac || '') + '#' + (i.mac || '');
   if (sig === btSig) return;
   btSig = sig;
   const note = $('btnote');
@@ -281,9 +289,27 @@ function renderBt(s) {
   const box = $('btlist');
   if (!box) return;
   box.innerHTML = '';
+
+  // A row of its own for the sound card, so either direction can be put back
+  // without hunting for which device currently owns it.
+  const card = document.createElement('div');
+  card.className = 'btdev';
+  const cardName = document.createElement('span');
+  cardName.textContent = 'sound card';
+  const cardSpk = document.createElement('button');
+  cardSpk.className = 'mini'; cardSpk.textContent = 'speaker';
+  cardSpk.disabled = !o.mac;
+  cardSpk.onclick = () => cmd('bt spk off');
+  const cardMic = document.createElement('button');
+  cardMic.className = 'mini'; cardMic.textContent = 'mic';
+  cardMic.disabled = !i.mac;
+  cardMic.onclick = () => cmd('bt mic off');
+  card.append(cardName, cardSpk, cardMic);
+  box.append(card);
+
   for (const d of devs) {
     const row = document.createElement('div');
-    row.className = 'btdev' + (d.mac === b.active ? ' active' : '');
+    row.className = 'btdev' + ((d.out || d.in) ? ' active' : '');
     const name = document.createElement('span');
     name.textContent = d.name + (d.connected ? ' (connected)' : '') +
       (d.paired ? '' : ' (not paired)');
@@ -292,8 +318,7 @@ function renderBt(s) {
     row.append(name, mac);
     if (!d.paired) {
       // A device a scan has just found is only *discovered*: BlueZ will not
-      // connect it until it is paired, and nothing in the station did that
-      // before.  Offer that step before the role buttons, then re-read the
+      // connect it until it is paired.  Offer that step first, then re-read the
       // list once the pairing has had time to finish.
       const pr = document.createElement('button');
       pr.className = 'mini'; pr.textContent = 'pair';
@@ -307,11 +332,15 @@ function renderBt(s) {
     } else {
       const spk = document.createElement('button');
       spk.className = 'mini'; spk.textContent = 'speaker';
-      spk.onclick = () => cmd('bt use ' + d.mac + ' speaker');
-      const hs = document.createElement('button');
-      hs.className = 'mini'; hs.textContent = 'headset';
-      hs.onclick = () => cmd('bt use ' + d.mac + ' headset');
-      row.append(spk, hs);
+      spk.style.fontWeight = d.out ? '700' : '400';
+      spk.style.outline = d.out ? '1px solid var(--green)' : 'none';
+      spk.onclick = () => cmd(d.out ? 'bt spk off' : 'bt spk ' + d.mac);
+      const mic = document.createElement('button');
+      mic.className = 'mini'; mic.textContent = 'mic';
+      mic.style.fontWeight = d.in ? '700' : '400';
+      mic.style.outline = d.in ? '1px solid var(--green)' : 'none';
+      mic.onclick = () => cmd(d.in ? 'bt mic off' : 'bt mic ' + d.mac);
+      row.append(spk, mic);
     }
     box.append(row);
   }
