@@ -521,6 +521,7 @@ void mmi_parse(char *cmd){
 	//   bt use MAC speaker    trust it, connect, send the audio to it
 	//   bt use MAC headset    ...as a headset, microphone included
 	//   bt scan               look for devices for 20 s
+	//   bt pair MAC           pair and trust a device the scan found
 	//   bt off                back to the sound card
 	//   btdev MAC ROLE        the config.txt form: remembers, does not connect
 	if(strncmp(token[0],"bt",2)==0){
@@ -558,8 +559,9 @@ void mmi_parse(char *cmd){
 					snprintf(line, sizeof(line), "using the sound card");
 				gui_cmd_resp(line);
 				for(int i = 0; i < bt_count(); i++){
-					snprintf(line, sizeof(line), "%s  %s%s", bt_mac(i), bt_name(i),
-					         bt_connected(i) ? "  (connected)" : "");
+					snprintf(line, sizeof(line), "%s  %s%s%s", bt_mac(i), bt_name(i),
+					         bt_connected(i) ? "  (connected)" : "",
+					         bt_paired(i)    ? "" : "  (not paired)");
 					gui_cmd_resp(line);
 				}
 				if(bt_count() == 0) gui_cmd_resp("nothing known yet: bt scan looks for devices");
@@ -580,6 +582,23 @@ void mmi_parse(char *cmd){
 			audio_set_backend(audio_parse_backend("alsa"));
 			save_line_to_config("btdev", "btdev off");
 			gui_cmd_resp("audio back on the sound card");
+			valid = true;
+		} else if(nt == 3 && strncmp(token[1],"pair",4)==0){
+			// A device found by a scan is only discovered: nothing will connect
+			// it until it is paired, and a one-shot bluetoothctl registers no
+			// pairing agent unless it is asked for one.  Pair and trust here;
+			// choosing speaker or headset afterwards does the connect.
+			const char *mac = token[2];
+			if(!bt_valid_mac(mac)){
+				gui_cmd_resp("not a Bluetooth address (xx:xx:xx:xx:xx:xx)");
+			} else if(!bt_available()){
+				gui_cmd_resp(bt_available_why());
+			} else if(bt_pair_sync(mac, 20)){
+				bt_refresh();
+				gui_cmd_resp("paired and trusted - now choose speaker or headset");
+			} else {
+				gui_cmd_resp("pairing failed: the device may want a PIN, or be out of range");
+			}
 			valid = true;
 		} else if(nt == 3 || (nt == 4 && strncmp(token[1],"use",3) == 0)){
 			// "bt <mac> speaker" and "bt use <mac> speaker" are both accepted.

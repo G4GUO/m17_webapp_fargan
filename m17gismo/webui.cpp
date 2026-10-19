@@ -280,9 +280,10 @@ static void build_state(char *out, int len) {
                  bt_powered() ? "true" : "false", bt_active_role(), bt_active_mac(),
                  bt_active_name(), bt_active_connected() ? "true" : "false");
     for(int i = 0; i < bt_count(); i++)
-        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s}",
+        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s,\"paired\":%s}",
                      i ? "," : "", bt_mac(i), bt_name(i), bt_icon(i),
-                     bt_connected(i) ? "true" : "false");
+                     bt_connected(i) ? "true" : "false",
+                     bt_paired(i) ? "true" : "false");
     o = json_add(out, len, o, "]}");
     o = json_add(out, len, o, ",\"mic_level\":%.3f,\"spk_level\":%.3f",
                  audio_get_mic_level(), audio_get_spk_level());

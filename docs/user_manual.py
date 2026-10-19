@@ -406,15 +406,27 @@ def build(path: str) -> None:
         "\u2014 plus a <b>scan</b> to look for new ones. Choosing a device connects it, sends the "
         "audio to it, and remembers the choice for the next start. <b>use the sound card</b> puts "
         "the audio back where it was.")
+    m.p("A device a scan has just found is only <i>discovered</i>: it is not paired yet, and nothing "
+        "can connect it until it is. Such a row shows <b>(not paired)</b> and offers a <b>pair</b> "
+        "button instead of the two role buttons; press it, and once the device is paired the "
+        "<b>speaker</b> and <b>headset</b> buttons appear. Pairing can take a few seconds, and a "
+        "device that insists on a PIN will report that it failed rather than retrying silently.")
+    m.p("The status line beside the button reports what is actually true at that moment. A device "
+        "that has been switched off, or has gone out of range, stops showing <b>(connected)</b> "
+        "within a few seconds \u2014 the station asks the Bluetooth daemon in the background rather "
+        "than trusting what it saw when the device was chosen. If the device is connected but the "
+        "audio has fallen back to the sound card, the line says <b>connected, but the audio is on "
+        "the sound card</b> instead of pretending all is well.")
     m.p("A Bluetooth device does one of two things at a time, and they are not interchangeable. "
         "<b>Speaker</b> is A2DP: the best audio quality, but playback only, so the microphone stays "
         "on the Pi's sound card, and there is a delay of about a fifth of a second. <b>Headset</b> is "
         "HFP: both directions through the headset, and it is the headset's own microphone you talk "
         "into. HFP works at 8 kHz mono \u2014 which is exactly M17's own rate, so nothing is lost.")
     m.p("The console does the same thing, and is the way to do it without the mouse: <b>bt</b> lists "
-        "the devices and what is in use, <b>bt use &lt;address&gt; speaker</b> or <b>bt use "
-        "&lt;address&gt; headset</b> chooses one, <b>bt scan</b> looks for new devices for twenty "
-        "seconds, and <b>bt off</b> goes back to the sound card.")
+        "the devices and what is in use, <b>bt pair &lt;address&gt;</b> pairs and trusts one, <b>bt "
+        "use &lt;address&gt; speaker</b> or <b>bt use &lt;address&gt; headset</b> chooses one, <b>bt "
+        "scan</b> looks for new devices for twenty seconds, and <b>bt off</b> goes back to the sound "
+        "card.")
     m.p("If the device is switched off, or out of range, the audio stays on the sound card rather "
         "than going silent \u2014 so press <b>speaker</b> or <b>headset</b> again once it is on. "
         "Bluetooth audio needs the <code>bluez-alsa</code> packages on the Pi; without them the "
@@ -552,6 +564,7 @@ def build(path: str) -> None:
         ["bt use MAC speaker", "Play through a Bluetooth speaker; the microphone stays on the sound card."],
         ["bt use MAC headset", "Talk and listen through a Bluetooth headset, at 8 kHz."],
         ["bt scan", "Look for Bluetooth devices for 20 seconds."],
+        ["bt pair MAC", "Pair and trust a device a scan found, before choosing it."],
         ["bt off", "Put the audio back on the Pi sound card."],
         ["lead 4", "Blank codec frames sent before the voice - see section 7."],
         ["fargan", "The neural receiver: whether FARGAN is built in, and whether it is on."],

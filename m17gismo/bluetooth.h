@@ -45,6 +45,7 @@ const char *bt_mac(int i);
 const char *bt_name(int i);
 const char *bt_icon(int i);
 bool bt_connected(int i);
+bool bt_paired(int i);                     // "Paired: yes" for that device
 
 const char *bt_adapter(void);              // "DC:A6:32:54:DF:63", "" if none
 bool bt_powered(void);
@@ -71,9 +72,25 @@ void bt_connect_async(const char *mac);
 // Connect and wait for it (up to timeout_s).  Pointing the audio at a device
 // whose A2DP PCM does not exist yet just falls back to the card, and bluealsa
 // only creates the PCM once the profile is up - so a command that routes audio
-// to a device has to let the connection finish first.
+// to a device has to let the connection finish first.  An unpaired device is
+// paired first; "connect" alone cannot do that from a one-shot command.
 bool bt_connect_sync(const char *mac, int timeout_s);
 void bt_scan_async(void);
+
+// Pairing.  A device found by a scan is only *discovered*: BlueZ will not
+// connect it until it is paired, and a one-shot bluetoothctl registers no
+// pairing agent unless asked.  bt_pair_sync() pairs with a NoInputNoOutput
+// agent (enough for a speaker's "Just Works") and trusts the device; a device
+// that demands a PIN fails and says so.  Synchronous so the command can report
+// what happened; the asynchronous form pairs, trusts and connects.
+bool bt_pair_sync(const char *mac, int timeout_s);
+void bt_pair_async(const char *mac);
+
+// Start the background monitor: it keeps the connected flag honest (a speaker
+// that is switched off must not keep showing "connected") and rebuilds the
+// device list every half minute.  A no-op where Bluetooth is unavailable.
+void bt_start_monitor(void);
+void bt_poll_connected(void);              // one cheap poll, also callable by hand
 
 // A strictly formatted MAC address.  These strings end up in a shell command
 // line, so nothing else is accepted.

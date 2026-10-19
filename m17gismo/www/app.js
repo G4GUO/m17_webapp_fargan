@@ -256,16 +256,21 @@ function renderBt(s) {
     return;
   }
   open.disabled = false;
+  const a = (s && s.alsa) || {};
+  const onBt = !!(a.device && String(a.device).indexOf('bluealsa:') === 0);
   if (b.active) {
-    st.textContent = b.role + ': ' + (b.active_name || b.active) +
-      (b.connected ? ' (connected)' : ' (not connected)');
-    st.style.color = b.connected ? 'var(--green)' : 'var(--amber)';
+    let txt = b.role + ': ' + (b.active_name || b.active);
+    if (!b.connected) txt += ' (not connected)';
+    else if (!onBt) txt += ' (connected, but the audio is on the sound card)';
+    else txt += ' (connected)';
+    st.textContent = txt;
+    st.style.color = (b.connected && onBt) ? 'var(--green)' : 'var(--amber)';
   } else {
     st.textContent = 'no Bluetooth device selected';
     st.style.color = 'var(--dim)';
   }
   const devs = b.devices || [];
-  const sig = devs.map(d => d.mac + (d.connected ? '1' : '0')).join('|') + '#' + (b.active || '');
+  const sig = devs.map(d => d.mac + (d.connected ? '1' : '0') + (d.paired ? 'p' : 'u')).join('|') + '#' + (b.active || '');
   if (sig === btSig) return;
   btSig = sig;
   const note = $('btnote');
@@ -280,16 +285,34 @@ function renderBt(s) {
     const row = document.createElement('div');
     row.className = 'btdev' + (d.mac === b.active ? ' active' : '');
     const name = document.createElement('span');
-    name.textContent = d.name + (d.connected ? ' (connected)' : '');
+    name.textContent = d.name + (d.connected ? ' (connected)' : '') +
+      (d.paired ? '' : ' (not paired)');
     const mac = document.createElement('code');
     mac.textContent = d.mac;
-    const spk = document.createElement('button');
-    spk.className = 'mini'; spk.textContent = 'speaker';
-    spk.onclick = () => cmd('bt use ' + d.mac + ' speaker');
-    const hs = document.createElement('button');
-    hs.className = 'mini'; hs.textContent = 'headset';
-    hs.onclick = () => cmd('bt use ' + d.mac + ' headset');
-    row.append(name, mac, spk, hs);
+    row.append(name, mac);
+    if (!d.paired) {
+      // A device a scan has just found is only *discovered*: BlueZ will not
+      // connect it until it is paired, and nothing in the station did that
+      // before.  Offer that step before the role buttons, then re-read the
+      // list once the pairing has had time to finish.
+      const pr = document.createElement('button');
+      pr.className = 'mini'; pr.textContent = 'pair';
+      pr.onclick = () => {
+        pr.disabled = true; pr.textContent = 'pairing...';
+        cmd('bt pair ' + d.mac);
+        setTimeout(() => cmd('bt'), 9000);
+        setTimeout(() => cmd('bt'), 22000);
+      };
+      row.append(pr);
+    } else {
+      const spk = document.createElement('button');
+      spk.className = 'mini'; spk.textContent = 'speaker';
+      spk.onclick = () => cmd('bt use ' + d.mac + ' speaker');
+      const hs = document.createElement('button');
+      hs.className = 'mini'; hs.textContent = 'headset';
+      hs.onclick = () => cmd('bt use ' + d.mac + ' headset');
+      row.append(spk, hs);
+    }
     box.append(row);
   }
 }

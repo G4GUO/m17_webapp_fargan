@@ -494,6 +494,7 @@ Nothing is lost by HFP's 8 kHz: M17 carries Codec2 at 3.2 kbps.
 The console (and the **Bluetooth...** button in the Audio panel) drives it:
 
     bt                     what Bluetooth knows, and what is in use
+    bt pair MAC            pair and trust a device a scan found
     bt use MAC speaker     trust it, connect, and send the output to it
     bt use MAC headset     ...as a headset, microphone included
     bt scan                look for devices for 20 seconds
@@ -502,6 +503,23 @@ The console (and the **Bluetooth...** button in the Audio panel) drives it:
 `bt use` writes itself into `config.txt` (as `btdev MAC ROLE`), so the choice
 survives a restart.  Details worth knowing:
 
+* **Discovered is not paired.**  A device a scan has just found will not connect
+  until it is paired, and a one-shot `bluetoothctl` registers no pairing agent
+  unless it is asked for one (`--agent NoInputNoOutput`, which is what a
+  "Just Works" speaker needs).  `bt pair MAC` does that and then trusts the
+  device; `bt use` pairs first when it has to, so picking a role for a new
+  device works too.  A device that demands a PIN fails and says so.
+* **The connected flag is polled, not remembered.**  The state goes out several
+  times a second and every `bluetoothctl` call is a D-Bus round trip, so the
+  device list is a cache - but a stale one is a lie: a speaker that has been
+  switched off used to keep showing "connected" until someone typed `bt`.
+  A monitor thread asks the cheap question (`devices Connected`, one call) every
+  five seconds and rebuilds names and paired flags every thirty, and the list is
+  swapped in one step so the UI never flickers.
+* **"Connected" is not "audio is flowing".**  The status line distinguishes the
+  two: if the device is connected but the ALSA output is not the `bluealsa:` PCM
+  (because it was not there when the stream opened, or the card took the
+  fallback), it says so.
 * **A device has to be trusted, not just paired.**  BlueZ refuses the profile
   connection otherwise, which reads as a connection attempt that is cancelled
   with no explanation.  `bt use` trusts as part of connecting.
