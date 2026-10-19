@@ -26,6 +26,7 @@
 #include <pthread.h>
 
 #include "bluetooth.h"
+#include "audio.h"      // audio_request_reopen(): a device that comes up later is picked up
 
 typedef struct {
     char mac[BT_MAC_LEN];
@@ -283,7 +284,19 @@ void bt_poll_connected(void) {
             for (int d = 0; d < m_count; d++)
                 if (strcmp(m_dev[d].mac, mac) == 0) conn[d] = true;
         }
-        for (int d = 0; d < m_count; d++) m_dev[d].conn = conn[d];
+        for (int d = 0; d < m_count; d++) {
+            if (strcmp(m_dev[d].mac, m_active_mac) == 0 && m_dev[d].conn != conn[d]) {
+                // The device in use has come up (or gone away).  The audio
+                // streams were opened when it was not there - or are still on
+                // it - so ask for a re-open; with no sound card there is nothing
+                // else to fall back to, and the station must not sit silent
+                // until someone restarts it.
+                m_dev[d].conn = conn[d];
+                audio_request_reopen();
+                continue;
+            }
+            m_dev[d].conn = conn[d];
+        }
     }
     pthread_mutex_unlock(&m_lock);
 }

@@ -82,13 +82,28 @@ bool audio_backend_pending(void) {
     if (m_pending == AUDIO_NONE) return false;
 #ifdef HAVE_ALSA
     // Selecting the device that is already open is not a change: re-opening it
-    // would only risk losing the stream.
-    if (m_pending == AUDIO_ALSA && m_backend == AUDIO_ALSA && !audio_alsa_device_changed())
-        return false;
+    // would only risk losing the stream.  "Nothing is open" is different - that
+    // is a device that has not come up yet, and it has to keep being tried.
+    if (m_pending == AUDIO_ALSA && m_backend == AUDIO_ALSA && !audio_alsa_device_changed()) {
+        bool mic = false, spk = false;
+        audio_local_streams(&mic, &spk);
+        if (mic || spk) return false;
+    }
     // A device that was not up yet - a Bluetooth headset's SCO link is created
     // when the first of its streams opens, so the other one has to wait for it -
-    // gets a few more attempts, spaced out, and then the fallback stands.
-    if (m_retry_left <= 0) return false;
+    // gets a few more attempts, spaced out.
+    if (m_retry_left <= 0) {
+        // The burst is spent.  A device asked for by name is still worth a slow
+        // retry: a speaker that is switched on twenty minutes later has to be
+        // picked up without restarting the station, and with no sound card there
+        // is nothing else to fall back to.
+        if (!audio_alsa_device_requested()) return false;
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if (now.tv_sec - m_retry_at.tv_sec < 15) return false;
+        m_retry_at = now;
+        return true;
+    }
     {
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -102,11 +117,14 @@ bool audio_backend_pending(void) {
 }
 
 void audio_request_reopen(void) {
-    if (m_mic_open || m_spk_open) {
-        m_pending = m_backend;
-        m_retry_left = 8;             // a Bluetooth profile can take a moment
-        clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
-    }
+    // Always mark it, even with nothing open.  The interesting case is a device
+    // that has *not* opened yet - a Bluetooth headset that is not connected, or
+    // a card that has been unplugged and put back - and with no stream open there
+    // was no close/open cycle to hang the change on, so the station used to sit
+    // on a dead device until the next restart.
+    m_pending = m_backend;
+    m_retry_left = 8;                // a Bluetooth profile can take a moment
+    clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
 }
 
 bool audio_have_pulse(void) {

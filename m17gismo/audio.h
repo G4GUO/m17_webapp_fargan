@@ -100,6 +100,10 @@ void audio_alsa_capture_follow_card(void);
 // Are the streams open on something other than what is configured now?  Used
 // to tell a real device change from re-selecting what is already in use.
 bool audio_alsa_device_changed(void);
+// True when a device was asked for by name (a Bluetooth PCM, or a card), as
+// opposed to "whatever card is present".  A named device is retried slowly
+// forever: it may be switched on long after the station started.
+bool audio_alsa_device_requested(void);
 // Did the last open have to fall back to the sound card?  A Bluetooth device
 // that is still coming up needs another attempt, not a silent station.
 bool audio_alsa_fell_back(void);

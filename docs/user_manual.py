@@ -429,8 +429,10 @@ def build(path: str) -> None:
         "card.")
     m.p("If the device is switched off, or out of range, the audio stays on the sound card rather "
         "than going silent \u2014 so press <b>speaker</b> or <b>headset</b> again once it is on. "
-        "Bluetooth audio needs the <code>bluez-alsa</code> packages on the Pi; without them the "
-        "button says so and everything else is unchanged.")
+        "With no sound card attached there is deliberately nothing to fall back to: the station "
+        "says so, waits, and picks the Bluetooth device up by itself as soon as it is switched on, "
+        "without a restart. Bluetooth audio needs the <code>bluez-alsa</code> packages on the Pi; "
+        "without them the button says so and everything else is unchanged.")
     m.h2("If the browser refuses your microphone")
     m.p("Browsers only allow microphone access on a secure page. A page opened as "
         "<b>http://&lt;address&gt;:8080/</b> is not secure, so the microphone may be blocked. Either "

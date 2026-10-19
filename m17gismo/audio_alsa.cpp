@@ -102,6 +102,8 @@ const char *audio_alsa_capture_device(void) {
 // no reason at all.
 bool audio_alsa_fell_back(void) { return m_fb_mic || m_fb_spk; }
 
+bool audio_alsa_device_requested(void) { return m_requested[0] != 0; }
+
 bool audio_alsa_device_changed(void) {
     char out[128], cap[128];
     resolve_device(out, sizeof(out), false);
@@ -506,16 +508,23 @@ static void *cap_drain_thread(void *arg) {
 }
 
 void audio_alsa_mic_open(void) {
-    char dev[128];
+    char dev[128], want[128];
     m_fb_mic = false;
     resolve_device(dev, sizeof(dev), true);
+    snprintf(want, sizeof(want), "%s", dev);
     if (!open_pcm(&m_in, dev, SND_PCM_STREAM_CAPTURE, "microphone")) {
         // A device asked for by name - a Bluetooth headset, or a card that has
         // been unplugged - must not leave the station deaf.  Fall back to
-        // whatever card is present, and say so.
+        // whatever card is present, and say so - unless there is no card at all,
+        // in which case a Bluetooth-only station is the intended arrangement and
+        // the retry loop will pick the device up when it appears.
         char alt[128];
         resolve_auto_device(alt, sizeof(alt));
-        if (strcmp(alt, dev) != 0 && open_pcm(&m_in, alt, SND_PCM_STREAM_CAPTURE, "microphone")) {
+        if (pick_usb_card() < 0) {
+            printf("Audio Input: %s is not available and no sound card is attached\n", dev);
+            snprintf(m_error, sizeof(m_error),
+                     "microphone (%s): not available, and no sound card is attached", dev);
+        } else if (strcmp(alt, dev) != 0 && open_pcm(&m_in, alt, SND_PCM_STREAM_CAPTURE, "microphone")) {
             printf("Audio Input: %s is not available, using %s\n", dev, alt);
             snprintf(dev, sizeof(dev), "%s", alt);
             m_fb_mic = true;
@@ -540,20 +549,48 @@ void audio_alsa_mic_open(void) {
             m_in = NULL;
         }
     } else {
-        printf("Audio Input failed: %s\n", m_error);
+        // The speaker may be the direction that brought the HFP link up.  Retry
+        // this side on its own, without closing the stream that works - tearing
+        // both down and reopening is exactly what made the two directions take
+        // turns succeeding.
+        // The microphone is usually this station's *first* stream, so the HFP
+        // link may simply not exist yet: give this one its own attempts before
+        // declaring the headset unusable.
+        if (want[0]) {
+            for (int i = 0; i < 8 && m_in == NULL; i++) {
+                usleep(500000);
+                open_pcm(&m_in, want, SND_PCM_STREAM_CAPTURE, "microphone");
+            }
+        }
+        if (m_in == NULL) {
+            printf("Audio Input failed: %s\n", m_error);
+            // Mark it like a fallback so the audio layer keeps the change
+            // pending: bluealsa creates the SCO link when the first of a
+            // headset's two PCMs opens, so the second can fail and succeed a
+            // few seconds later.  Without this the microphone was given up on
+            // for the rest of the run.
+            m_fb_mic = true;
+        }
     }
 }
 
 void audio_alsa_spk_open(void) {
-    char dev[128];
+    char dev[128], want[128];
     m_fb_spk = false;
     resolve_device(dev, sizeof(dev), false);
+    snprintf(want, sizeof(want), "%s", dev);
     if (!open_pcm(&m_out, dev, SND_PCM_STREAM_PLAYBACK, "speaker")) {
         // Same as capture: a Bluetooth speaker that is off, or a card that has
-        // gone, falls back to whatever is there rather than going silent.
+        // gone, falls back to whatever is there rather than going silent.  With
+        // no card attached there is nothing to fall back to, and the retry loop
+        // waits for the Bluetooth device instead of pretending a card exists.
         char alt[128];
         resolve_auto_device(alt, sizeof(alt));
-        if (strcmp(alt, dev) != 0 && open_pcm(&m_out, alt, SND_PCM_STREAM_PLAYBACK, "speaker")) {
+        if (pick_usb_card() < 0) {
+            printf("Audio Output: %s is not available and no sound card is attached\n", dev);
+            snprintf(m_error, sizeof(m_error),
+                     "speaker (%s): not available, and no sound card is attached", dev);
+        } else if (strcmp(alt, dev) != 0 && open_pcm(&m_out, alt, SND_PCM_STREAM_PLAYBACK, "speaker")) {
             printf("Audio Output: %s is not available, using %s\n", dev, alt);
             snprintf(dev, sizeof(dev), "%s", alt);
             m_fb_spk = true;
@@ -570,7 +607,21 @@ void audio_alsa_spk_open(void) {
         for (int i = 0; i < 4; i++) snd_pcm_writei(m_out, silence, 160);
         snd_pcm_start(m_out);
     } else {
-        printf("Audio Output failed: %s\n", m_error);
+        // The other direction may be the one that brought the SCO link up.
+        // Give this one its own attempts *without* closing the stream that
+        // works: closing both and reopening is what made the two directions
+        // take turns failing.  bluealsa creates the HFP link when the first
+        // PCM opens, and the second one appears a moment later.
+        if (m_in != NULL && want[0]) {
+            for (int i = 0; i < 8 && m_out == NULL; i++) {
+                usleep(500000);
+                open_pcm(&m_out, want, SND_PCM_STREAM_PLAYBACK, "speaker");
+            }
+        }
+        if (m_out == NULL) {
+            printf("Audio Output failed: %s\n", m_error);
+            m_fb_spk = true;
+        }
     }
 }
 

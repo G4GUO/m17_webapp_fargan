@@ -524,7 +524,13 @@ survives a restart.  Details worth knowing:
   connection otherwise, which reads as a connection attempt that is cancelled
   with no explanation.  `bt use` trusts as part of connecting.
 * **The audio falls back to the sound card** if the device is off, out of range,
-  or not connected yet, rather than going silent - the log says which.
+  or not connected yet, rather than going silent - the log says which.  With no
+  sound card attached there is nothing to fall back to, and that is a supported
+  arrangement: the station says plainly that the device is not available and no
+  card is attached, keeps the choice pending, and opens the Bluetooth PCM as soon
+  as the device appears - including when it is switched on long after start-up.
+  A device that changes state (connected or dropped) triggers a re-open from the
+  Bluetooth monitor, so nothing waits for a restart.
 * Pointing the audio at a device connects it **first**: bluealsa only creates
   the A2DP PCM once the profile is up, so routing to a PCM that does not exist
   yet is a race.
