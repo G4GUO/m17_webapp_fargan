@@ -337,6 +337,9 @@ void *m17_txrx_thread(void *arg){
 		    audio_mic_open();
 		    audio_spk_open();
 		    usleep(120000);// Buffer 6 sound blocks
+		    // Apply any pending audio change now, with the radio still
+		    // unkeyed: this is the only safe moment.
+		    if (audio_backend_pending()) audio_apply_pending();
 		    // Go to transmit
 		    radio_duplex();
 	        // Send preamble
@@ -366,9 +369,10 @@ void *m17_txrx_thread(void *arg){
 			    if (m17_tx_lich_index() == 0) m17_tx_meta_from_gps(false);
 			    // Send Sub frame
 			    m17_send_stream_frame( payload );
-			    // Apply a backend change made in the web UI (browser <-> Pi sound
-			    // card) without waiting for the next transmission
-			    if (audio_backend_pending()) audio_apply_pending();
+			    // A pending audio change is applied *before* the next
+			    // transmission, never here: closing a bluealsa PCM in the
+			    // middle of a stream frame loses the transmitter (and used to
+			    // take the whole process down).
 			    // Receive audio
 			    int len = radio_receive_samples( m_rsamples, N_SAMPLES );
 			    m17_dsp_rx( m_rsamples, len);

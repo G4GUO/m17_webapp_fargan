@@ -526,6 +526,11 @@ static void *cap_drain_thread(void *arg) {
 
 void audio_alsa_mic_open(void) {
     char dev[128], want[128];
+    // Opening twice must be a no-op.  The second open used to start a second
+    // capture thread on the same PCM and overwrite the first one's handle, and
+    // two threads reading one bluealsa PCM took the process down (SIGSEGV) the
+    // moment the transmitter keyed.
+    if (m_in != NULL || m_cap_run) return;
     m_fb_mic = false;
     resolve_device(dev, sizeof(dev), true);
     snprintf(want, sizeof(want), "%s", dev);
@@ -584,6 +589,7 @@ void audio_alsa_mic_open(void) {
 
 void audio_alsa_spk_open(void) {
     char dev[128], want[128];
+    if (m_out != NULL) return;      // already open: re-opening only risks the stream
     m_fb_spk = false;
     resolve_device(dev, sizeof(dev), false);
     snprintf(want, sizeof(want), "%s", dev);
