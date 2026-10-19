@@ -368,10 +368,7 @@ void *m17_txrx_thread(void *arg){
 			    m17_send_stream_frame( payload );
 			    // Apply a backend change made in the web UI (browser <-> Pi sound
 			    // card) without waiting for the next transmission
-			    if (audio_backend_pending()) {
-			        audio_mic_close(); audio_mic_open();
-			        audio_spk_close(); audio_spk_open();
-			    }
+			    if (audio_backend_pending()) audio_apply_pending();
 			    // Receive audio
 			    int len = radio_receive_samples( m_rsamples, N_SAMPLES );
 			    m17_dsp_rx( m_rsamples, len);
@@ -392,10 +389,7 @@ void *m17_txrx_thread(void *arg){
 		    audio_spk_open();
 			while((m_ptt == PTT_RX)&&M17_MODE_OK(gen)){
 			    // Re-open the audio paths if the web UI changed the backend
-			    if (audio_backend_pending()) {
-			        audio_spk_close();
-			        audio_spk_open();
-			    }
+			    if (audio_backend_pending()) audio_apply_pending();
 			    int len = radio_receive_samples( m_rsamples, N_SAMPLES );
 			    m17_dsp_rx( m_rsamples, len );
 			    // Throw input samples away
@@ -463,10 +457,7 @@ void *m17_txrx_audio_loopback(void *arg){
     uint8_t payload[16];
     const int gen = m_mode_gen;                 // the mode this thread started for
     while(M17_MODE_OK(gen)){
-        if (audio_backend_pending()) {
-            audio_mic_close(); audio_mic_open();
-            audio_spk_close(); audio_spk_open();
-        }
+        if (audio_backend_pending()) audio_apply_pending();
         // Simplex transmit
 		if( m_ptt == PTT_TX){
 	        audio_input(m_amicsamples,  m_nsam);

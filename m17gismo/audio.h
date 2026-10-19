@@ -104,6 +104,15 @@ bool audio_alsa_device_changed(void);
 // opposed to "whatever card is present".  A named device is retried slowly
 // forever: it may be switched on long after the station started.
 bool audio_alsa_device_requested(void);
+// A Bluetooth direction is selected but its stream is not open (the HFP link
+// may not exist yet).  This has to be retried even when the other direction is
+// happily open, which is what used to stop the microphone from ever recovering.
+bool audio_alsa_side_missing(void);
+bool audio_alsa_out_missing(void);      // speaker selected but not open
+bool audio_alsa_in_missing(void);       // microphone selected but not open
+// Apply a pending change, touching only the direction that needs it: a working
+// stream must not be torn down to retry the other one.
+void audio_apply_pending(void);
 // Did the last open have to fall back to the sound card?  A Bluetooth device
 // that is still coming up needs another attempt, not a silent station.
 bool audio_alsa_fell_back(void);

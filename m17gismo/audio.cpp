@@ -84,7 +84,9 @@ bool audio_backend_pending(void) {
     // Selecting the device that is already open is not a change: re-opening it
     // would only risk losing the stream.  "Nothing is open" is different - that
     // is a device that has not come up yet, and it has to keep being tried.
-    if (m_pending == AUDIO_ALSA && m_backend == AUDIO_ALSA && !audio_alsa_device_changed()) {
+    bool missing = audio_alsa_side_missing();
+    if (!missing && m_pending == AUDIO_ALSA && m_backend == AUDIO_ALSA &&
+        !audio_alsa_device_changed()) {
         bool mic = false, spk = false;
         audio_local_streams(&mic, &spk);
         if (mic || spk) return false;
@@ -97,7 +99,7 @@ bool audio_backend_pending(void) {
         // retry: a speaker that is switched on twenty minutes later has to be
         // picked up without restarting the station, and with no sound card there
         // is nothing else to fall back to.
-        if (!audio_alsa_device_requested()) return false;
+        if (!audio_alsa_device_requested() && !missing) return false;
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
         if (now.tv_sec - m_retry_at.tv_sec < 15) return false;
@@ -125,6 +127,23 @@ void audio_request_reopen(void) {
     m_pending = m_backend;
     m_retry_left = 8;                // a Bluetooth profile can take a moment
     clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
+}
+
+// Apply a requested change.  Only the direction that is actually missing or
+// moved is touched: closing both to retry one is what made a working speaker
+// and a failed microphone take turns succeeding.
+void audio_apply_pending(void) {
+    if (m_pending != AUDIO_NONE) { m_backend = m_pending; m_pending = AUDIO_NONE; }
+#ifdef HAVE_ALSA
+    if (!want_alsa(m_backend)) return;
+    if (audio_alsa_device_changed()) {
+        audio_mic_close(); audio_mic_open();
+        audio_spk_close(); audio_spk_open();
+        return;
+    }
+    if (audio_alsa_in_missing())  { audio_mic_close(); audio_mic_open(); }
+    if (audio_alsa_out_missing()) { audio_spk_close(); audio_spk_open(); }
+#endif
 }
 
 bool audio_have_pulse(void) {

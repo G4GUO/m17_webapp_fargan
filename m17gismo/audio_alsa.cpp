@@ -104,6 +104,23 @@ bool audio_alsa_fell_back(void) { return m_fb_mic || m_fb_spk; }
 
 bool audio_alsa_device_requested(void) { return m_requested[0] != 0; }
 
+// Is a *Bluetooth* direction selected but not open?  That is the case that has
+// to keep being retried: the SCO link may not exist yet, and the other direction
+// being open must not stop this one from being tried again.  A card direction is
+// left alone - if the card is not there, retrying it forever would achieve
+// nothing.
+bool audio_alsa_side_missing(void) {
+    return audio_alsa_out_missing() || audio_alsa_in_missing();
+}
+
+bool audio_alsa_out_missing(void) {
+    return m_requested[0] && strncmp(m_requested, "bluealsa:", 9) == 0 && m_out == NULL;
+}
+
+bool audio_alsa_in_missing(void) {
+    return m_requested_cap[0] && strncmp(m_requested_cap, "bluealsa:", 9) == 0 && m_in == NULL;
+}
+
 bool audio_alsa_device_changed(void) {
     char out[128], cap[128];
     resolve_device(out, sizeof(out), false);
@@ -553,15 +570,6 @@ void audio_alsa_mic_open(void) {
         // this side on its own, without closing the stream that works - tearing
         // both down and reopening is exactly what made the two directions take
         // turns succeeding.
-        // The microphone is usually this station's *first* stream, so the HFP
-        // link may simply not exist yet: give this one its own attempts before
-        // declaring the headset unusable.
-        if (want[0]) {
-            for (int i = 0; i < 8 && m_in == NULL; i++) {
-                usleep(500000);
-                open_pcm(&m_in, want, SND_PCM_STREAM_CAPTURE, "microphone");
-            }
-        }
         if (m_in == NULL) {
             printf("Audio Input failed: %s\n", m_error);
             // Mark it like a fallback so the audio layer keeps the change
@@ -607,17 +615,6 @@ void audio_alsa_spk_open(void) {
         for (int i = 0; i < 4; i++) snd_pcm_writei(m_out, silence, 160);
         snd_pcm_start(m_out);
     } else {
-        // The other direction may be the one that brought the SCO link up.
-        // Give this one its own attempts *without* closing the stream that
-        // works: closing both and reopening is what made the two directions
-        // take turns failing.  bluealsa creates the HFP link when the first
-        // PCM opens, and the second one appears a moment later.
-        if (m_in != NULL && want[0]) {
-            for (int i = 0; i < 8 && m_out == NULL; i++) {
-                usleep(500000);
-                open_pcm(&m_out, want, SND_PCM_STREAM_PLAYBACK, "speaker");
-            }
-        }
         if (m_out == NULL) {
             printf("Audio Output failed: %s\n", m_error);
             m_fb_spk = true;
