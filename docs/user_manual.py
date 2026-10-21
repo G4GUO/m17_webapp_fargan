@@ -407,9 +407,12 @@ def build(path: str) -> None:
         "takes the sound away.")
     m.p("The two buttons are independent, so the SoundCore mini can carry the sound (A2DP, playback "
         "only) while a headset carries the microphone (HFP, 8 kHz \u2014 exactly M17's own rate, so "
-        "nothing is lost against Codec2). A device a scan has just found is only <i>discovered</i>: "
-        "it shows <b>(not paired)</b> and a <b>pair</b> button instead, and nothing can connect it "
-        "until it is paired.")
+        "nothing is lost against Codec2). A headset that has no A2DP at all \u2014 the BH-M10B is "
+        "one \u2014 shows <b>speaker (HFP)</b> instead of <b>speaker</b>, and its own earpiece "
+        "carries the sound at 8 kHz; the station works that out from the device, so there is nothing "
+        "to set. A device a scan has just found is only <i>discovered</i>: it shows <b>(not "
+        "paired)</b> and a <b>pair</b> button instead, and nothing can connect it until it is "
+        "paired.")
     m.p("If the device is switched off, or out of range, the station says so and keeps trying: it "
         "picks the device up by itself as soon as it is switched on, without a restart. With no "
         "sound card attached there is deliberately nothing to fall back to, so a Bluetooth-only "
@@ -427,6 +430,11 @@ def build(path: str) -> None:
         "the bar is pinned while you speak normally. <b>volume</b> runs 0-100%, with 100% at 0 dB.")
     m.p("Both are kept for the next start, and the console does the same: <b>micgain 150</b> and "
         "<b>spkvol 60</b>.")
+    m.p("Received audio is played through about a third of a second of buffer, which is what keeps "
+        "the odd late moment from being heard as a gap. If the status line under the meters ever "
+        "reports <b>speaker underruns</b>, the card itself ran dry \u2014 that number is worth "
+        "quoting to whoever looks after the station, because no underruns at all means any break-up "
+        "is happening before the audio gets to the card.")
     m.h2("The card's own controls: the Mixer panel")
     m.p("A USB sound card has controls of its own \u2014 a volume, and often a microphone gain and "
         "an automatic-gain switch. These are <b>not</b> the same as the application's levels: they "
