@@ -155,7 +155,8 @@ class Manual:
         card(col(0), top - 52, cw, 46, "Station", [
             "my callsign      destination", "gateway      listen to all", "broadcast (ba)  help  clear log"])
         card(col(1), top - 52, cw, 46, "Radio", [
-            "RX frequency (Hz)", "RX gain   [======]", "TX frequency (Hz)   TX gain   [====]"])
+            "RX frequency (Hz)    TX frequency (Hz)", "RX gain [====]    TX gain [====]",
+            "freq correction   apply   AFC", "transmit carrier    receive"])
         card(col(0), top - 110, cw, 52, "Reflector", [
             "reflector    module", "connect / disconnect"])
         card(col(1), top - 110, cw, 52, "Position", [
@@ -163,8 +164,9 @@ class Manual:
         card(col(0), top - 168, cw, 52, "Audio", [
             "audio device    volume", "blank frames before voice", "mic / spk   transmit health"])
         card(col(1), top - 168, cw, 52, "PUSH TO TALK", [
-            "RX / TX light     in frame", "signal \u25af\u25af\u25af\u25af\u25af  power \u25af\u25af\u25af",
-            "break     carrier     duplex", "hardware PTT: GPIO 11 ready"])
+            "signal \u25af\u25af\u25af\u25af\u25af   power \u25af\u25af\u25af",
+            "RX / TX light     in frame", "break     carrier     duplex",
+            "hardware PTT: GPIO 11 ready"])
         card(rx, top - 168, rw, 162, "Console / Command help", [
             "log lines ...", "", ">> type a command    [send]", "",
             "gps / csv / rf / tf / rg", "conn / disc / mode / audio"])
@@ -180,7 +182,9 @@ class Manual:
             "Figure 1: the panels on the page. The header is always visible and carries your locator and "
             "position. The cards on the left are laid out two across - Station and Radio, Reflector and "
             "Position, then Audio with PUSH TO TALK at the bottom right - and the console and command help "
-            "are the column on the right. (Sketch, not a screenshot.)",
+            "are the column on the right. The cards are compact enough that the whole page fits a "
+            "screen without scrolling; the signal and power bars sit at the top of the PUSH TO TALK "
+            "card. (Sketch, not a screenshot.)",
             S["caption"]))
 
 
@@ -282,7 +286,8 @@ def build(path: str) -> None:
                          "space bar instead. A physical switch on the Pi does the same job."],
         ["RX / TX light", "Shows whether you are transmitting. Next to it, <b>in frame</b> means a valid "
                           "M17 signal is being decoded, <b>no signal</b> means nothing is there."],
-        ["signal and power bars", "How strong the received signal is, and your transmit power setting."],
+        ["signal and power bars", "At the top of the PUSH TO TALK card: how strong the received signal is, "
+                                  "and your transmit power setting."],
         ["Station", "Your callsign, who you are calling, and the broadcast and log buttons."],
         ["Radio", "The frequencies and gain settings, and the button that applies them."],
         ["Reflector", "Linking over the internet to other M17 users (you may never need it)."],
