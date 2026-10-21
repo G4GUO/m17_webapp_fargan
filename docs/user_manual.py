@@ -432,7 +432,9 @@ def build(path: str) -> None:
         "+3 dB, the last three dB in red, a pale marker that holds the peak and falls back slowly, "
         "and a clip lamp in the corner that lights when the level reaches full scale (click it to "
         "reset). The needle is damped - quick to rise, slow to fall - so it is readable while you "
-        "talk; the figure underneath is the exact level, and it turns amber above -6 dB and red at 0.")
+        "talk; the figure underneath is the exact level, and it turns amber above -6 dB and red at 0. "
+        "When the audio stops - the other station finishes, or you release PUSH TO TALK - the needle "
+        "falls back to rest within a second or two rather than hanging where the last frame left it.")
     m.p("Beside the meters are <b>mic level</b> and <b>volume</b>. Both are applied on the Pi "
         "itself: the microphone gain sits between the microphone and the modulator, and the volume "
         "between the receiver and the speaker. That is what makes the meters worth watching \u2014 "

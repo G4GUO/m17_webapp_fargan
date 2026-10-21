@@ -38,6 +38,12 @@ static bool m_change;                        // a change is waiting for a safe m
 
 static double m_mic_level;
 static double m_spk_level;
+// When each level was last measured.  The meters are driven from these values,
+// and nothing updates them when the audio stops - an over ends, or the station
+// stops talking - so without a timestamp the needle sat where the last frame
+// left it.  That is the "meter does not go back to zero" that gets reported.
+static struct timespec m_mic_level_at;
+static struct timespec m_spk_level_at;
 
 // Level controls, applied here on the Pi rather than in the browser: the gain
 // sits between the microphone and the modulator, and the volume between the
@@ -500,7 +506,7 @@ static void audio_pace(int len) {
     nanosleep(&want, NULL);
 }
 
-static void level_update(double *acc, const int16_t *s, int len) {
+static void level_update(double *acc, struct timespec *at, const int16_t *s, int len) {
     if (len <= 0) return;
     double sum = 0;
     for (int i = 0; i < len; i++) {
@@ -509,6 +515,22 @@ static void level_update(double *acc, const int16_t *s, int len) {
     }
     *acc = sqrt(sum / len);
     if (*acc > 1.0) *acc = 1.0;
+    clock_gettime(CLOCK_MONOTONIC, at);
+}
+
+// A meter falls back when it stops being driven: a short hold, so a gap between
+// syllables is not a reading, then a fast decay - about what a real movement
+// does, and enough that the needle is at rest a second or two after the audio
+// stops instead of hanging at the last frame's level.
+static double level_read(double level, const struct timespec *at) {
+    if (level <= 0.0) return 0.0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double dt = (double)(now.tv_sec - at->tv_sec) + (now.tv_nsec - at->tv_nsec) / 1e9;
+    if (dt <= 0.30) return level;              // 300 ms hold
+    double db = 20.0 * log10(level) - 40.0 * (dt - 0.30);
+    if (db <= -70.0) return 0.0;
+    return pow(10.0, db / 20.0);
 }
 
 // The microphone gain, applied to the samples about to be encoded: this is the
@@ -538,7 +560,7 @@ void audio_input(int16_t *s, int len) {
     if (m_file) {
         audio_file_input(s, len);
         apply_gain(s, len, m_mic_gain);
-        level_update(&m_mic_level, s, len);
+        level_update(&m_mic_level, &m_mic_level_at, s, len);
         audio_pace(len);
         return;
     }
@@ -561,7 +583,7 @@ void audio_input(int16_t *s, int len) {
         default: break;                     // mute: stays silent
     }
     apply_gain(s, len, m_mic_gain);
-    level_update(&m_mic_level, s, len);
+    level_update(&m_mic_level, &m_mic_level_at, s, len);
     audio_pace(len);
 }
 
@@ -575,7 +597,7 @@ void audio_output(int16_t *s, int len) {
 #endif
     double vol = m_spk_vol;
     apply_gain(s, len, vol);
-    level_update(&m_spk_level, s, len);
+    level_update(&m_spk_level, &m_spk_level_at, s, len);
     if (!m_spk_open) return;
 
     if (m_file) { audio_file_output(s, len); return; }
@@ -617,8 +639,8 @@ void audio_output_flush(void) {
 #endif
 }
 
-double audio_get_mic_level(void) { return m_mic_level; }
-double audio_get_spk_level(void) { return m_spk_level; }
+double audio_get_mic_level(void) { return level_read(m_mic_level, &m_mic_level_at); }
+double audio_get_spk_level(void) { return level_read(m_spk_level, &m_spk_level_at); }
 
 // ---------------------------------------------------------------------------
 void audio_set_mic_gain(double g) {
