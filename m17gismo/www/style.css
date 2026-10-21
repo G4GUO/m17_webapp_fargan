@@ -222,5 +222,8 @@ p:empty, span.lbl:empty, .note:empty { display: none; }
 .dclip.on { fill: var(--red); stroke: #ff9a9a; filter: drop-shadow(0 0 3px rgba(255,92,92,.9)); }
 .dbread { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center;
           font-size: .66rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
-.dialcap { position: absolute; top: 4px; left: 0; right: 0; text-align: center;
-           font-size: .62rem; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }
+/* The caption sits in the middle of the face, where the scale is not: the needle
+   sweeps across it, which does not matter, but the numbers have to stay clear. */
+.dialcap { position: absolute; top: 47px; left: 0; right: 0; text-align: center;
+           font-size: .66rem; color: #9fb0bf; text-transform: uppercase; letter-spacing: .09em;
+           pointer-events: none; }
