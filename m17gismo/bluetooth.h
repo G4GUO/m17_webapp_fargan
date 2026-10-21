@@ -76,6 +76,14 @@ bool bt_set_output(const char *mac, const char *profile);   // profile: a2dp|sco
 bool bt_set_input(const char *mac);
 bool bt_valid_profile(const char *p);
 
+// Which audio profiles a device really offers, from `bluetoothctl info`, cached.
+// A headset often has no A2DP at all, so it has to be driven as HFP instead.
+bool bt_device_a2dp(const char *mac);
+bool bt_device_hfp(const char *mac);
+// Load the profiles of every device in the cached list (called from
+// bt_refresh(), which is already shelling out - never from the state path).
+void bt_load_profiles(void);
+
 // Remember a choice without touching any hardware: used by "bt spk"/"bt mic"
 // after they have asked for the connection, and by config.txt at startup.
 bool bt_set_active(const char *mac, const char *role);      // speaker|headset

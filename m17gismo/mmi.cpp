@@ -401,7 +401,8 @@ void mmi_parse(char *cmd){
 			gui_cmd_resp(line);
 			valid = true;
 		} else if(nt == 2 || nt == 3){
-			if(nt == 3) audio_alsa_set_device(token[2]);
+			if(nt == 3) audio_set_card_device(token[2]);
+			else        audio_set_card_device("");
 			audio_set_backend(audio_parse_backend(token[1]));
 			valid = true;
 		} else if(nt == 6 && strcmp(token[1], "apply") == 0 &&
@@ -797,20 +798,27 @@ void mmi_parse(char *cmd){
 			} else if(!bt_available()){
 				gui_cmd_resp(bt_available_why());
 			} else {
-				const char *prof = (nt >= 5 && bt_valid_profile(token[4])) ? token[4] : "a2dp";
-				if(spk) bt_set_output(mac, prof);
+				bool wanted_a2dp = (nt < 5 || strcmp(token[4], "sco") != 0);
+				if(spk) bt_set_output(mac, wanted_a2dp ? "a2dp" : "sco");
 				else    bt_set_input(mac);
 				bool up = bt_connect_sync(mac, 12);
 				if(spk){
-					snprintf(line, sizeof(line), "btspk %s %s", mac, prof);
+					// bt_set_output() may have chosen HFP for a device with no
+					// A2DP, so save what is really in use, not what was asked.
+					snprintf(line, sizeof(line), "btspk %s %s", mac, bt_out_profile());
 					save_line_to_config("btspk", line);
 				} else {
 					snprintf(line, sizeof(line), "btmic %s", mac);
 					save_line_to_config("btmic", line);
 				}
-				snprintf(line, sizeof(line), "%s device chosen%s - Configure Audio attaches it",
-				         spk ? "speaker" : "microphone",
-				         up ? "" : ", not answering yet");
+				if(spk && wanted_a2dp && strcmp(bt_out_profile(), "sco") == 0)
+					snprintf(line, sizeof(line),
+					         "speaker device chosen (HFP: this device has no A2DP)%s - Configure Audio attaches it",
+					         up ? "" : ", not answering yet");
+				else
+					snprintf(line, sizeof(line), "%s device chosen%s - Configure Audio attaches it",
+					         spk ? "speaker" : "microphone",
+					         up ? "" : ", not answering yet");
 				gui_cmd_resp(line);
 				valid = true;
 			}
@@ -848,7 +856,7 @@ void mmi_parse(char *cmd){
 				gui_cmd_resp(bt_available_why());
 			} else {
 				const char *prof = (nt == 4 && bt_valid_profile(token[3])) ? token[3] : "a2dp";
-				if(spk){ bt_set_output(mac, prof); }
+				if(spk){ bt_set_output(mac, prof); prof = bt_out_profile(); }
 				else   { bt_set_input(mac); }
 				bool up = bt_connect_sync(mac, 12);
 				bt_sync_routes();
@@ -884,7 +892,7 @@ void mmi_parse(char *cmd){
 				bt_connect_async(mac);
 				if(!up) gui_cmd_resp("the device did not answer; the audio stays where it was");
 				if(strcmp(role,"speaker") == 0){
-					snprintf(line, sizeof(line), "btspk %s a2dp", mac);
+					snprintf(line, sizeof(line), "btspk %s %s", mac, bt_out_profile());
 					save_line_to_config("btspk", line);
 				} else {
 					snprintf(line, sizeof(line), "btspk %s sco", mac);

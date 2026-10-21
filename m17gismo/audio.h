@@ -60,6 +60,9 @@ AudioRoute     audio_get_route(bool out);               // false = microphone
 // closed and reopened at the next safe moment - never in mid-transmission - and
 // a direction that did not change is left alone.
 void           audio_apply_routes(AudioRoute out, AudioRoute in);
+// The sound card the "soundcard" route should use, by name ("plughw:3,0").
+// Empty means "whatever card is present".  Remembered across route changes.
+void           audio_set_card_device(const char *dev);
 void           audio_set_route(bool out, AudioRoute r);
 // A short "soundcard / bluetooth" style summary for the interface's top bar.
 void           audio_route_summary(char *out, int len);
@@ -121,6 +124,10 @@ void audio_alsa_output(int16_t *s, int len);
 void audio_alsa_flush(void);
 bool audio_alsa_ready(void);
 long audio_alsa_overruns(void);
+// Playback underruns (XRUNs) since the station started.  A receiver that drops
+// out in bursts is either this or something upstream, and the two look the same
+// from the speaker - so count them.
+long audio_alsa_spk_xruns(void);
 long audio_alsa_starved(void);
 bool audio_alsa_mic_is_open(void);
 bool audio_alsa_spk_is_open(void);
@@ -136,8 +143,12 @@ const char *audio_alsa_capture_device(void);
 // speaker), so the microphone does not follow the output.
 void audio_alsa_capture_follow_card(void);
 // Are the streams open on something other than what is configured now?  Used
-// to tell a real device change from re-selecting what is already in use.
+// to tell a real device change from re-selecting what is already in use.  The
+// two directions are reported separately, so moving the microphone does not
+// tear down a speaker that is working.
 bool audio_alsa_device_changed(void);
+bool audio_alsa_out_device_changed(void);
+bool audio_alsa_in_device_changed(void);
 // True when a device was asked for by name (a Bluetooth PCM, or a card), as
 // opposed to "whatever card is present".  A named device is retried slowly
 // forever: it may be switched on long after the station started.

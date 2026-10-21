@@ -45,6 +45,9 @@ static bool m_have_read;
 static bool m_ctl_valid;    // the card's mixer controls have been read (see below)
 static long m_overruns;     // capture overruns: microphone audio the card discarded
 static long m_starved;      // capture samples lost (ring overflow, or padded silence)
+static long m_spk_xruns;    // playback underruns: gaps in what the speaker gets
+static snd_pcm_uframes_t m_out_buf;      // frames in the playback buffer
+static snd_pcm_uframes_t m_out_period;   // ...and in one period
 
 // Defined with the device selection below, but the setters above need them.
 static void resolve_auto_device(char *out, size_t n);
@@ -75,6 +78,7 @@ const char *audio_alsa_error(void) {
     return m_error;
 }
 long audio_alsa_overruns(void) { return m_overruns; }
+long audio_alsa_spk_xruns(void) { return m_spk_xruns; }
 long audio_alsa_starved(void)  { return m_starved; }
 
 // What is actually open right now, as opposed to the last error string - the
@@ -121,13 +125,22 @@ bool audio_alsa_in_missing(void) {
     return m_requested_cap[0] && strncmp(m_requested_cap, "bluealsa:", 9) == 0 && m_in == NULL;
 }
 
-bool audio_alsa_device_changed(void) {
-    char out[128], cap[128];
+bool audio_alsa_out_device_changed(void) {
+    char out[128];
+    if (m_out == NULL) return false;
     resolve_device(out, sizeof(out), false);
+    return m_used_out[0] && strcmp(m_used_out, out) != 0;
+}
+
+bool audio_alsa_in_device_changed(void) {
+    char cap[128];
+    if (m_in == NULL) return false;
     resolve_device(cap, sizeof(cap), true);
-    if (m_out != NULL && m_used_out[0] && strcmp(m_used_out, out) != 0) return true;
-    if (m_in  != NULL && m_used_in[0]  && strcmp(m_used_in,  cap) != 0) return true;
-    return false;
+    return m_used_in[0] && strcmp(m_used_in, cap) != 0;
+}
+
+bool audio_alsa_device_changed(void) {
+    return audio_alsa_out_device_changed() || audio_alsa_in_device_changed();
 }
 
 void audio_alsa_set_device(const char *dev) {
@@ -433,7 +446,12 @@ static bool open_pcm(snd_pcm_t **pcm, const char *dev, snd_pcm_stream_t dir, con
     // samples in it are gone - that is dropped transmit audio, not just latency.
     snd_pcm_uframes_t period = 160;
     snd_pcm_hw_params_set_period_size_near(*pcm, hw, &period, 0);
-    unsigned int periods = (dir == SND_PCM_STREAM_CAPTURE) ? 16 : 8;
+    // Playback gets 320 ms of buffer (16 x 20 ms) rather than 160: a received
+    // over has to survive the odd late write - a FARGAN block finishing late, a
+    // radio read that took too long, bluealsa's own hiccup - without the speaker
+    // running dry, and a dry stream is what a dropout sounds like.  Capture
+    // stays at 320 ms too, for the same reason at the other end.
+    unsigned int periods = 16;
     snd_pcm_hw_params_set_periods_near(*pcm, hw, &periods, 0);
     if ((rc = snd_pcm_hw_params(*pcm, hw)) < 0) {
         snprintf(m_error, sizeof(m_error), "%s: %s", what, snd_strerror(rc));
@@ -442,6 +460,11 @@ static bool open_pcm(snd_pcm_t **pcm, const char *dev, snd_pcm_stream_t dir, con
         return false;
     }
     snd_pcm_prepare(*pcm);
+    if (dir == SND_PCM_STREAM_PLAYBACK) {
+        snd_pcm_uframes_t got = 0, per = 0;
+        if (snd_pcm_hw_params_get_buffer_size(hw, &got) == 0) m_out_buf = got;
+        if (snd_pcm_hw_params_get_period_size(hw, &per, 0) == 0) m_out_period = per;
+    }
     m_error[0] = 0;
     m_error_stream = 0;
 #ifdef M17WEB_DIAG
@@ -459,6 +482,34 @@ static bool open_pcm(snd_pcm_t **pcm, const char *dev, snd_pcm_stream_t dir, con
 #endif
     m_error[0] = 0;
     return true;
+}
+
+// Fill the playback buffer with silence.  A stream that starts empty underruns
+// on its first write, and one that has underrun stays empty for as long as the
+// receiver's next block takes to arrive - which is heard as the audio breaking
+// up.  Priming gives it a buffer's worth of slack, and is what "add a block of
+// silence at the start" comes to in practice.
+//
+// How much to prime is a real decision.  At open, the whole buffer: the card
+// then runs a buffer behind the decoder and a late write costs latency rather
+// than silence.  After an underrun, only a couple of periods: that happens
+// between overs (nothing is written when nobody is talking), and refilling the
+// whole buffer there would swallow the first fifth of a second of the next
+// transmission.
+static void spk_prime(snd_pcm_uframes_t want) {
+    if (!m_out) return;
+    if (want == 0) want = 2 * 160;
+    int16_t silence[160];
+    memset(silence, 0, sizeof(silence));
+    snd_pcm_uframes_t done = 0;
+    while (done < want) {
+        snd_pcm_uframes_t chunk = want - done;
+        if (chunk > 160) chunk = 160;
+        snd_pcm_sframes_t n = snd_pcm_writei(m_out, silence, chunk);
+        if (n == -EPIPE) { snd_pcm_prepare(m_out); break; }
+        if (n <= 0) break;
+        done += (snd_pcm_uframes_t)n;
+    }
 }
 
 static void close_pcm(snd_pcm_t **pcm) {
@@ -614,11 +665,10 @@ void audio_alsa_spk_open(void) {
         snprintf(m_used_out, sizeof(m_used_out), "%s", dev);
         // The card powers up with its own idea of the levels; put them back.
         audio_alsa_mixer_apply();
-        // Prefill with silence: starting playback on an empty buffer guarantees
-        // an immediate underrun (XRUN) on the first write.
-        int16_t silence[160];
-        memset(silence, 0, sizeof(silence));
-        for (int i = 0; i < 4; i++) snd_pcm_writei(m_out, silence, 160);
+        // Fill the whole buffer with silence before starting: an empty buffer
+        // underruns on the first write and then runs a block behind, which is
+        // heard as chopped audio for the first second of every over.
+        spk_prime(m_out_buf ? m_out_buf : 16 * 160);
         snd_pcm_start(m_out);
     } else {
         if (m_out == NULL) {
@@ -710,7 +760,16 @@ void audio_alsa_output(int16_t *s, int len) {
     while (done < len) {
         snd_pcm_sframes_t n = snd_pcm_writei(m_out, s + done, (snd_pcm_uframes_t)(len - done));
         if (n > 0) { done += (int)n; continue; }
-        if (n == -EPIPE) { snd_pcm_prepare(m_out); continue; }  // underrun
+        if (n == -EPIPE || n == -ESTRPIPE) {
+            // Underrun: the speaker ran dry.  Count it - this is the number that
+            // says whether a report of "the audio breaks up" is the card or
+            // something upstream - then refill and carry on.
+            m_spk_xruns++;
+            if (n == -ESTRPIPE) snd_pcm_resume(m_out);
+            snd_pcm_prepare(m_out);
+            spk_prime((m_out_period ? m_out_period : 160) * 2);
+            continue;
+        }
         if (n == -EAGAIN) { continue; }
         break;
     }

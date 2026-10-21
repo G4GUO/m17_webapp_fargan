@@ -31,6 +31,7 @@ static AudioRoute m_r_in  = AROUTE_BROWSER;
 static AudioRoute m_open_out = AROUTE_MUTE;   // what is actually attached
 static AudioRoute m_open_in  = AROUTE_MUTE;
 static bool m_file;                           // -a file:... (test path)
+static char m_card_dev[128];                  // a card named by hand: "audio alsa plughw:3,0"
 static bool m_mic_open;
 static bool m_spk_open;
 static bool m_change;                        // a change is waiting for a safe moment
@@ -95,13 +96,14 @@ static void sync_devices(void) {
         // No device chosen: leave the request alone and let the open fall back
         // to the card, saying so, rather than going silent.
     } else if (m_r_out == AROUTE_CARD) {
-        audio_alsa_set_device("");
+        audio_alsa_set_device(m_card_dev);      // "" = whatever card is present
     }
 
     if (m_r_in == AROUTE_BT) {
         if (cap[0]) audio_alsa_set_capture_device(cap);
     } else if (m_r_in == AROUTE_CARD) {
-        audio_alsa_capture_follow_card();
+        if (m_card_dev[0]) audio_alsa_set_capture_device(m_card_dev);
+        else               audio_alsa_capture_follow_card();
     }
 #endif
 }
@@ -111,6 +113,14 @@ void audio_apply_routes(AudioRoute out, AudioRoute in) {
     m_r_in  = in;
     sync_devices();
     audio_request_reopen();
+}
+
+// The card the "soundcard" route should use, by name.  Kept apart from the
+// routes so a Bluetooth selection does not overwrite it, and so naming a device
+// survives the next route change - it used to be forgotten the moment anything
+// called audio_apply_routes() again.
+void audio_set_card_device(const char *dev) {
+    snprintf(m_card_dev, sizeof(m_card_dev), "%s", dev ? dev : "");
 }
 
 void audio_set_route(bool out, AudioRoute r) {
@@ -225,19 +235,30 @@ void audio_request_reopen(void) {
     clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
 }
 
+static void audio_arm_retry(void) {
+    m_retry_left = 8;
+    clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
+}
+
 // Apply a requested change.  Only the direction that is actually missing or
 // moved is touched: closing both to retry one is what made a working speaker
 // and a failed microphone take turns succeeding.
 void audio_apply_pending(void) {
     bool in_changed  = (m_open_in  != m_r_in);
     bool out_changed = (m_open_out != m_r_out);
-    bool in_missing = false, out_missing = false;
+    bool in_missing = false, out_missing = false, in_moved = false, out_moved = false;
 #ifdef HAVE_ALSA
     in_missing  = audio_alsa_in_missing();
     out_missing = audio_alsa_out_missing();
+    // The device behind a route can change without the route changing - picking
+    // a different Bluetooth headset for the microphone, say.  The old stream has
+    // to be released before the new one opens, or it stays attached and the new
+    // device never gets used, which looks like the selection being ignored.
+    in_moved  = audio_alsa_in_device_changed();
+    out_moved = audio_alsa_out_device_changed();
 #endif
-    if (in_changed || in_missing)   { audio_mic_close(); audio_mic_open(); }
-    if (out_changed || out_missing) { audio_spk_close(); audio_spk_open(); }
+    if (in_changed || in_missing || in_moved)   { audio_mic_close(); audio_mic_open(); }
+    if (out_changed || out_missing || out_moved) { audio_spk_close(); audio_spk_open(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +384,11 @@ void audio_mic_open(void) {
     if (use_alsa_in()) fell = audio_alsa_fell_back();
     named = audio_alsa_in_missing() || audio_alsa_out_missing();
 #endif
-    if (fell && named) { if (m_retry_left <= 0) m_retry_left = 8; audio_request_reopen(); }
+    // A device that is named but not up yet is retried on the cadence in
+    // audio_backend_pending().  Do NOT ask for an immediate reopen here: the
+    // failure would be its own trigger and the station would hammer bluealsa in
+    // a tight loop, filling the log several times a second.
+    if (fell && named) audio_arm_retry();
     else if (m_open_in == m_r_in && m_open_out == m_r_out) m_change = false;
 }
 
@@ -411,7 +436,11 @@ void audio_spk_open(void) {
     if (use_alsa_out()) fell = audio_alsa_fell_back();
     named = audio_alsa_in_missing() || audio_alsa_out_missing();
 #endif
-    if (fell && named) { if (m_retry_left <= 0) m_retry_left = 8; audio_request_reopen(); }
+    // A device that is named but not up yet is retried on the cadence in
+    // audio_backend_pending().  Do NOT ask for an immediate reopen here: the
+    // failure would be its own trigger and the station would hammer bluealsa in
+    // a tight loop, filling the log several times a second.
+    if (fell && named) audio_arm_retry();
     else if (m_open_in == m_r_in && m_open_out == m_r_out) m_change = false;
 }
 

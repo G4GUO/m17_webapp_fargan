@@ -177,10 +177,78 @@ bool bt_valid_profile(const char *p) {
     return p && (strcmp(p, "a2dp") == 0 || strcmp(p, "sco") == 0);
 }
 
+// ------------------------------------------------------- profile capability
+//
+// Which audio profiles a device actually offers.  This matters because a
+// Bluetooth *headset* often has no A2DP at all: the BH-M10B advertises
+// Handsfree only, so asking bluealsa for PROFILE=a2dp gives a PCM that does not
+// exist and the speaker never opens, however many times it is retried.  A
+// headset used as the speaker therefore has to be asked for HFP output (8 kHz,
+// which is M17's own rate, so nothing is lost).
+//
+// `bluetoothctl info` is a D-Bus round trip, so the answer is cached per device
+// and loaded during bt_refresh() - never from the state path, which runs many
+// times a second.
+#define BT_CAPS_MAX 8
+typedef struct {
+    char mac[BT_MAC_LEN];
+    bool a2dp, hfp, known;
+} bt_caps_t;
+static bt_caps_t m_caps[BT_CAPS_MAX];
+static int m_caps_n;
+
+static bt_caps_t *caps_slot(const char *mac) {
+    for (int i = 0; i < m_caps_n; i++)
+        if (strcmp(m_caps[i].mac, mac) == 0) return &m_caps[i];
+    if (m_caps_n >= BT_CAPS_MAX) return NULL;
+    bt_caps_t *c = &m_caps[m_caps_n++];
+    memset(c, 0, sizeof(*c));
+    snprintf(c->mac, sizeof(c->mac), "%s", mac);
+    return c;
+}
+
+static void caps_load(const char *mac) {
+    if (!mac || !bt_valid_mac(mac)) return;
+    bt_caps_t *c = caps_slot(mac);
+    if (!c || c->known) return;
+    char cmd[128], out[2048];
+    snprintf(cmd, sizeof(cmd), "bluetoothctl info %s 2>/dev/null", mac);
+    if (!run_ok(cmd, out, sizeof(out))) return;      // unknown: try again later
+    c->a2dp  = (strstr(out, "Audio Sink") != NULL);   // 0000110b
+    c->hfp   = (strstr(out, "Handsfree") != NULL);    // 0000111e
+    c->known = true;
+}
+
+void bt_load_profiles(void) {
+    for (int i = 0; i < m_count; i++) caps_load(m_dev[i].mac);
+}
+
+bool bt_device_a2dp(const char *mac) {
+    if (!mac || !mac[0]) return false;
+    bt_caps_t *c = caps_slot(mac);
+    if (!c) return false;
+    if (!c->known) caps_load(mac);
+    return c->known && c->a2dp;
+}
+
+bool bt_device_hfp(const char *mac) {
+    if (!mac || !mac[0]) return false;
+    bt_caps_t *c = caps_slot(mac);
+    if (!c) return false;
+    if (!c->known) caps_load(mac);
+    return c->known && c->hfp;
+}
+
 bool bt_set_output(const char *mac, const char *profile) {
     if (mac && mac[0]) {
         if (!bt_valid_mac(mac)) return false;
         if (!bt_valid_profile(profile)) return false;
+        // A device with no A2DP but with Handsfree is a headset: ask for HFP
+        // output rather than a PCM bluealsa cannot create.  Unknown
+        // capabilities keep what was asked for, so a speaker that reports
+        // nothing useful behaves as it did before.
+        if (strcmp(profile, "a2dp") == 0 && bt_device_hfp(mac) && !bt_device_a2dp(mac))
+            profile = "sco";
         snprintf(m_out_mac, sizeof(m_out_mac), "%s", mac);
         snprintf(m_out_prof, sizeof(m_out_prof), "%s", profile);
     } else {
@@ -333,6 +401,10 @@ void bt_refresh(void) {
     m_powered = powered;
 
     pthread_mutex_unlock(&m_lock);
+
+    // What each one can actually do (A2DP and/or HFP) - one `bluetoothctl info`
+    // per device, here rather than in the state path.
+    bt_load_profiles();
 }
 
 // The cheap half of bt_refresh(): one bluetoothctl call for all devices.  This

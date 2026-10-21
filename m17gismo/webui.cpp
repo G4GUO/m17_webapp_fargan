@@ -297,15 +297,21 @@ static void build_state(char *out, int len) {
                  bt_out_connected() ? "true" : "false",
                  bt_in_mac(), bt_in_name(), bt_in_connected() ? "true" : "false");
     for(int i = 0; i < bt_count(); i++)
-        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s,\"paired\":%s,\"out\":%s,\"in\":%s}",
+        o = json_add(out, len, o, "%s{\"mac\":\"%s\",\"name\":\"%s\",\"icon\":\"%s\",\"connected\":%s,\"paired\":%s,\"out\":%s,\"in\":%s,"
+                 "\"a2dp\":%s,\"hfp\":%s}",
                      i ? "," : "", bt_mac(i), bt_name(i), bt_icon(i),
                      bt_connected(i) ? "true" : "false",
                      bt_paired(i) ? "true" : "false",
                      strcmp(bt_out_mac(), bt_mac(i)) == 0 ? "true" : "false",
-                     strcmp(bt_in_mac(),  bt_mac(i)) == 0 ? "true" : "false");
+                     strcmp(bt_in_mac(),  bt_mac(i)) == 0 ? "true" : "false",
+                     bt_device_a2dp(bt_mac(i)) ? "true" : "false",
+                     bt_device_hfp(bt_mac(i)) ? "true" : "false");
     o = json_add(out, len, o, "]}");
     o = json_add(out, len, o, ",\"mic_level\":%.3f,\"spk_level\":%.3f",
                  audio_get_mic_level(), audio_get_spk_level());
+    // Playback underruns: the number that separates "the card ran dry" from
+    // "nothing arrived to play" when a report of dropouts comes in.
+    o = json_add(out, len, o, ",\"spk_xruns\":%ld", audio_alsa_spk_xruns());
     o = json_add(out, len, o, ",\"tx_lead\":%d,\"tx_drops\":%ld,\"tx_overruns\":%ld",
                  m17_tx_lead_frames(), audio_tx_dropped(), audio_tx_overruns());
     {

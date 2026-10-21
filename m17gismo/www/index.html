@@ -243,9 +243,10 @@
   <p class="note" id="btnote">Looking for devices&hellip;</p>
   <div class="btlist" id="btlist"></div>
   <p class="note">
-    <b>Speaker</b> is A2DP: the best audio, playback only, so the microphone stays on
-    the Pi sound card. <b>Headset</b> is HFP: both directions at 8 kHz, which is M17's own
-    rate, so nothing is lost - but a device does one or the other, not both at once.
+    <b>speaker</b> is A2DP - the best audio, playback only - unless the device has no A2DP,
+    in which case it is driven as <b>speaker (HFP)</b> at 8 kHz, which is M17's own rate. <b>mic</b>
+    is always HFP, the device's own microphone. Choosing a device here only connects it; press
+    <b>Configure Audio</b> in the audio box to attach it.
   </p>
   <div class="row">
     <button id="btscan" class="mini">scan for devices</button>

@@ -209,6 +209,12 @@ function renderAudio(s) {
     }
   }
   if (s.audio_pending) txt += ' (applying\u2026)';
+  // Speaker underruns are the one number that says whether a dropout is the
+  // card running dry or nothing arriving to play.
+  if (s.spk_xruns > 0) {
+    txt += ' \u00b7 ' + s.spk_xruns + ' speaker underrun' + (s.spk_xruns === 1 ? '' : 's');
+    if (col === 'var(--green)') col = 'var(--amber)';
+  }
   el.textContent = txt;
   el.style.color = col;
 
@@ -311,7 +317,7 @@ function renderBt(s) {
 
   const devs = b.devices || [];
   const sig = devs.map(d => d.mac + (d.connected ? '1' : '0') + (d.paired ? 'p' : 'u') +
-      (d.out ? 'O' : '-') + (d.in ? 'I' : '-')).join('|') +
+      (d.out ? 'O' : '-') + (d.in ? 'I' : '-') + (d.a2dp ? 'A' : '-') + (d.hfp ? 'H' : '-')).join('|') +
     '#' + (o.mac || '') + '#' + (i.mac || '');
   if (sig === btSig) return;
   btSig = sig;
@@ -365,7 +371,12 @@ function renderBt(s) {
       row.append(pr);
     } else {
       const spk = document.createElement('button');
-      spk.className = 'mini'; spk.textContent = 'speaker';
+      spk.className = 'mini';
+      // A headset with no A2DP is driven as HFP instead (8 kHz, M17's own rate),
+      // so say so rather than offering an A2DP role the device cannot fill.
+      const hfpOnly = (d.a2dp === false && d.hfp);
+      spk.textContent = hfpOnly ? 'speaker (HFP)' : 'speaker';
+      if (hfpOnly) spk.title = 'This device has no A2DP: the speaker output uses HFP at 8 kHz.';
       spk.style.fontWeight = d.out ? '700' : '400';
       spk.style.outline = d.out ? '1px solid var(--green)' : 'none';
       spk.onclick = () => cmd(d.out ? 'bt sel spk off' : 'bt sel spk ' + d.mac);
