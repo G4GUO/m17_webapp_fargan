@@ -893,7 +893,7 @@ function makeDial(host) {
   const needleBack = el('line', { x1: 0, y1: 0, x2: 0, y2: 0, class: 'dneedleback' }, svg);
   const needle = el('line', { x1: 0, y1: 0, x2: 0, y2: 0, class: 'dneedle' }, svg);
   el('circle', { cx: PX, cy: PY, r: 3, class: 'dhub' }, svg);
-  const clip = el('circle', { cx: W - 10, cy: 10, r: 3.2, class: 'dclip' }, svg);
+  const clip = el('circle', { cx: 10, cy: 10, r: 3.2, class: 'dclip' }, svg);
   const clipTitle = el('title', {}, clip);
   clipTitle.textContent = 'clip: lights when the level reaches full scale (click to reset)';
 

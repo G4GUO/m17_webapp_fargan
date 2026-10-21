@@ -218,7 +218,7 @@ p:empty, span.lbl:empty, .note:empty { display: none; }
 .dpeak { stroke: #fff0b0; stroke-width: 2.6; stroke-linecap: round;
          filter: drop-shadow(0 0 1.4px rgba(255,240,176,.75)); }
 .dhub { fill: #9fb0bf; }
-.dclip { fill: #232b33; stroke: #55626e; stroke-width: .9; }
+.dclip { fill: #1b232a; stroke: #6a7784; stroke-width: 1; }
 .dclip.on { fill: var(--red); stroke: #ff9a9a; filter: drop-shadow(0 0 3px rgba(255,92,92,.9)); }
 .dbread { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center;
           font-size: .66rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
