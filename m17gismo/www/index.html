@@ -70,8 +70,8 @@
         </div>
       </div>
       <div class="row">
-        <button data-cmd="tc">transmit carrier</button>
-        <button data-cmd="rx">receive</button>
+        <button data-cmd="tc" class="mini">transmit carrier</button>
+        <button data-cmd="rx" class="mini">receive</button>
       </div>
       <div class="row simrow" id="simrow">
         <span class="lbl">simulator:</span>
@@ -143,22 +143,18 @@
       </div>
       <div class="row">
         <div class="vu">
-          <label class="meter"><span>mic</span><progress id="micbar" max="1" value="0"></progress></label>
-          <label class="meter"><span>spk</span><progress id="spkbar" max="1" value="0"></progress></label>
+          <div class="dial" id="micdial" aria-label="microphone level"><span class="dialcap">mic</span></div>
+          <div class="dial" id="spkdial" aria-label="speaker level"><span class="dialcap">spk</span></div>
         </div>
-        <label class="slider">mic level <output id="micgainout">0.0 dB</output>
-          <input id="micgain" type="range" min="0" max="200" step="5" value="100" title="Microphone gain, applied on the Pi before the modulator. 100% = 0 dB, 200% = +6 dB."></label>
-        <label class="slider">volume <output id="spkvolout">-2.0 dB</output>
-          <input id="spkvol" type="range" min="0" max="100" step="5" value="80" title="Speaker volume, applied on the Pi to the audio it plays. 100% = 0 dB."></label>
+        <div class="sliders">
+          <label class="slider">mic level <output id="micgainout">0.0 dB</output>
+            <input id="micgain" type="range" min="0" max="200" step="5" value="100" title="Microphone gain, applied on the Pi before the modulator. 100% = 0 dB, 200% = +6 dB."></label>
+          <label class="slider">volume <output id="spkvolout">-2.0 dB</output>
+            <input id="spkvol" type="range" min="0" max="100" step="5" value="80" title="Speaker volume, applied on the Pi to the audio it plays. 100% = 0 dB."></label>
+        </div>
       </div>
       <p class="note" id="audiostatus">checking the audio&hellip;</p>
       <p class="note" id="audioerr"></p>
-      <div class="row">
-        <label class="lbl">blank frames before voice
-          <input id="leadframes" type="number" min="0" max="50" step="2" value="4" style="width:5em">
-        </label>
-        <span class="lbl" id="txdrops">0 dropped samples</span>
-      </div>
       <div class="row">
         <label class="chk" title="Receive-only: FARGAN synthesis of the same Codec2 frames, at 16 kHz, on its own thread. Costs about half a Pi core.">
           <input type="checkbox" id="fargan" onchange="cmd('fargan ' + (this.checked ? 'on' : 'off'))">
@@ -188,6 +184,12 @@
         <button id="breakbtn" class="mini">break</button>
         <button id="carrierbtn" class="mini">carrier</button>
         <button id="duplexbtn" class="mini">duplex</button>
+      </div>
+      <div class="row">
+        <label class="lbl inline" title="Silence sent before your speech at the start of a transmission">
+          lead-in <input id="leadframes" type="number" min="0" max="50" step="2" value="4" style="width:3.6em">
+        </label>
+        <span class="lbl" id="txdrops">0 dropped samples</span>
       </div>
     </div>
   </section>

@@ -115,9 +115,10 @@ fieldset.cfgcol label.chk { font-size: .85rem; }
 button.wide { flex: 1 1 auto; }
 
 /* The level meters, and the two level controls under them */
-.vu { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .35rem;
-      flex: 1 1 11rem; align-items: center; }
-label.slider { flex: 1 1 10rem; }
+.vu { display: flex; gap: .35rem; flex-wrap: nowrap; margin-top: 0; align-items: flex-end; }
+.vu .sliders { display: flex; flex-direction: column; gap: .2rem; flex: 1 1 auto; min-width: 6rem; }
+label.slider { flex: 1 1 7rem; min-width: 6rem; }
+.lbl.inline { flex-direction: row; align-items: center; gap: .3rem; }
 label.slider output { color: var(--fg); font-variant-numeric: tabular-nums; }
 label.slider input[type=range] { width: 100%; max-width: 12rem; }
 .btlist {
@@ -199,3 +200,27 @@ header { flex-wrap: wrap; }
 p:empty, span.lbl:empty, .note:empty { display: none; }
 .note b { color: var(--fg); }
 .note code { background: var(--panel2); padding: 0 .25rem; border-radius: .2rem; }
+
+/* Analogue level meters: a VU-style dial per direction, in the Audio card. */
+.dial { position: relative; width: 116px; height: 86px; flex: 0 0 auto; }
+.dial svg.dialsvg { display: block; width: 116px; height: 86px; }
+.dface { fill: #0c1015; stroke: var(--line); stroke-width: 1; }
+.darc { fill: none; stroke: #3a4753; stroke-width: 3; stroke-linecap: round; }
+.darc-red { fill: none; stroke: var(--red); stroke-width: 4; stroke-linecap: butt; opacity: .9; }
+.dtick { stroke: #7d8b98; stroke-width: 1.2; }
+.dtick.minor { stroke: #4c5966; stroke-width: .9; }
+.dtick.red { stroke: var(--red); }
+.dnum { fill: #cfdae4; font-size: 8.6px; font-weight: 600; text-anchor: middle; font-family: system-ui, sans-serif; }
+.dnum.red { fill: #ff8080; }
+.dneedleback { stroke: #070a0d; stroke-width: 4.6; stroke-linecap: round; }
+.dneedle { stroke: #f2f7fc; stroke-width: 2.1; stroke-linecap: round;
+           filter: drop-shadow(0 0 1.6px rgba(242,247,252,.5)); }
+.dpeak { stroke: #fff0b0; stroke-width: 2.6; stroke-linecap: round;
+         filter: drop-shadow(0 0 1.4px rgba(255,240,176,.75)); }
+.dhub { fill: #9fb0bf; }
+.dclip { fill: #232b33; stroke: #55626e; stroke-width: .9; }
+.dclip.on { fill: var(--red); stroke: #ff9a9a; filter: drop-shadow(0 0 3px rgba(255,92,92,.9)); }
+.dbread { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center;
+          font-size: .66rem; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.dialcap { position: absolute; top: 4px; left: 0; right: 0; text-align: center;
+           font-size: .62rem; color: var(--dim); text-transform: uppercase; letter-spacing: .08em; }

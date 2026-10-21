@@ -286,8 +286,9 @@ def build(path: str) -> None:
                          "space bar instead. A physical switch on the Pi does the same job."],
         ["RX / TX light", "Shows whether you are transmitting. Next to it, <b>in frame</b> means a valid "
                           "M17 signal is being decoded, <b>no signal</b> means nothing is there."],
-        ["signal and power bars", "At the top of the PUSH TO TALK card: how strong the received signal is, "
-                                  "and your transmit power setting."],
+        ["signal and power bars", "The plain bars at the top of the PUSH TO TALK card: how strong the "
+                                  "received signal is, and your transmit power setting. (The audio levels in "
+                                  "the Audio card are the dials.)"],
         ["Station", "Your callsign, who you are calling, and the broadcast and log buttons."],
         ["Radio", "The frequencies and gain settings, and the button that applies them."],
         ["Reflector", "Linking over the internet to other M17 users (you may never need it)."],
@@ -425,6 +426,11 @@ def build(path: str) -> None:
         "<code>bluez-alsa</code> packages on the Pi; without them the box says so and everything "
         "else is unchanged.")
     m.h2("The two level controls, and the meters")
+    m.p("The two meters are moving-coil instruments, not bars: a needle on a scale from -40 to "
+        "+3 dB, the last three dB in red, a pale marker that holds the peak and falls back slowly, "
+        "and a clip lamp in the corner that lights when the level reaches full scale (click it to "
+        "reset). The needle is damped - quick to rise, slow to fall - so it is readable while you "
+        "talk; the figure underneath is the exact level, and it turns amber above -6 dB and red at 0.")
     m.p("Beside the meters are <b>mic level</b> and <b>volume</b>. Both are applied on the Pi "
         "itself: the microphone gain sits between the microphone and the modulator, and the volume "
         "between the receiver and the speaker. That is what makes the meters worth watching \u2014 "
@@ -539,7 +545,7 @@ def build(path: str) -> None:
         ["Control", "What it does"],
         ["Audio configuration\u2026", "Where the speaker and the microphone each come from and go - see section 7."],
         ["enable browser audio", "Starts this page's own audio by hand, if a saved configuration needs it and Configure Audio has not been pressed."],
-        ["mic / spk bars", "The microphone level going out and the speaker level being played, both measured on the Pi after its own level controls."],
+        ["mic / spk meters", "Two analogue dials: the microphone level going out and the speaker level being played, both measured on the Pi after its own level controls. The figure under each one is the exact level in dB."],
         ["mic level / volume", "Microphone gain and speaker volume, applied on the Pi - see section 7."],
         ["mixer", "The sound card's own volume and gain controls - see section 7."],
         ["blank frames before voice", "Silence sent before your speech at the start of a transmission. Default 4."],

@@ -92,8 +92,7 @@ function applyState(s) {
 
   $('signalbar').value = s.signal || 0;
   $('powerbar').value = s.power || 0;
-  $('micbar').value = s.mic_level || 0;
-  $('spkbar').value = s.spk_level || 0;
+  dialLevels(s.mic_level, s.spk_level);
 
   setIfIdle($('src'), (s.src || '').trim());
   setIfIdle($('dst'), (s.dst || '').trim());
@@ -827,6 +826,145 @@ function wire() {
 
 function isTyping(el) {
   return el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA');
+}
+
+// ---------------------------------------------------------------------------
+// Analogue level meters
+//
+// One VU-style dial per direction.  The scale is dB relative to full scale, from
+// -20 to +3, with the last three dB in red; the needle has meter ballistics (fast
+// up, slow back), a peak marker falls slowly behind it, and the clip lamp latches
+// until it is clicked.  The number under each dial is the one to quote; the
+// needle is for glancing at while you talk.
+const DIAL_MIN = -40, DIAL_MAX = 3;
+// Few, big numbers beat a forest of small ones at this size: the dial is 116 px
+// wide, and the figure underneath is the precise reading.  The unlabelled ticks
+// are there so the needle has something to sit against.
+const DIAL_LABELS = [[-40, '-40'], [-30, '-30'], [-20, '-20'], [-10, '-10'], [0, '0'], [3, '+3']];
+const DIAL_MINORS = [-35, -25, -15, -6, -3];
+const DIAL_NS = 'http://www.w3.org/2000/svg';
+
+function levelDb(lin) {
+  return (lin > 0) ? 20 * Math.log10(lin) : -60;
+}
+
+function makeDial(host) {
+  const W = 116, H = 86, PX = W / 2, PY = 74, R = 48, SPAN = 110;
+  const rad = (deg) => (deg - 90) * Math.PI / 180;          // 0 deg = straight up
+  const pt = (deg, r) => [PX + r * Math.cos(rad(deg)), PY + r * Math.sin(rad(deg))];
+  const angOf = (db) => -SPAN / 2 + SPAN * Math.max(0, Math.min(1, (db - DIAL_MIN) / (DIAL_MAX - DIAL_MIN)));
+
+  const el = (name, attrs, parent) => {
+    const e = document.createElementNS(DIAL_NS, name);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'dialsvg' }, host);
+  // face, scale arc, and the red zone over the top of it
+  el('rect', { x: .6, y: .6, width: W - 1.2, height: H - 1.2, rx: 9, class: 'dface' }, svg);
+  const arc = (a0, a1, r) => {
+    const p0 = pt(a0, r), p1 = pt(a1, r);
+    const large = Math.abs(a1 - a0) > 180 ? 1 : 0;
+    return `M ${p0[0].toFixed(2)} ${p0[1].toFixed(2)} A ${r} ${r} 0 ${large} 1 ${p1[0].toFixed(2)} ${p1[1].toFixed(2)}`;
+  };
+  el('path', { d: arc(-SPAN / 2, SPAN / 2, R), class: 'darc' }, svg);
+  el('path', { d: arc(angOf(0), angOf(DIAL_MAX), R), class: 'darc-red' }, svg);
+
+  // minor ticks first, so the labelled ones draw over them
+  for (const db of DIAL_MINORS) {
+    const a = angOf(db);
+    const p0 = pt(a, R - 2), p1 = pt(a, R + 2);
+    el('line', { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], class: 'dtick minor' }, svg);
+  }
+  // labelled ticks, with room to read them
+  for (const [db, text] of DIAL_LABELS) {
+    const a = angOf(db);
+    const p0 = pt(a, R - 5), p1 = pt(a, R + 3);
+    el('line', { x1: p0[0], y1: p0[1], x2: p1[0], y2: p1[1], class: db >= 0 ? 'dtick red' : 'dtick' }, svg);
+    const lp = pt(a, R + 12);
+    const t = el('text', { x: lp[0], y: lp[1] + 3.2, class: 'dnum' + (db >= 0 ? ' red' : '') }, svg);
+    t.textContent = text;
+  }
+
+  // peak marker and needle, both drawn from the pivot
+  const peak = el('line', { x1: 0, y1: 0, x2: 0, y2: 0, class: 'dpeak' }, svg);
+  const needleBack = el('line', { x1: 0, y1: 0, x2: 0, y2: 0, class: 'dneedleback' }, svg);
+  const needle = el('line', { x1: 0, y1: 0, x2: 0, y2: 0, class: 'dneedle' }, svg);
+  el('circle', { cx: PX, cy: PY, r: 3, class: 'dhub' }, svg);
+  const clip = el('circle', { cx: W - 10, cy: 10, r: 3.2, class: 'dclip' }, svg);
+  const clipTitle = el('title', {}, clip);
+  clipTitle.textContent = 'clip: lights when the level reaches full scale (click to reset)';
+
+  const setLine = (ln, a, r0, r1) => {
+    const a0 = pt(a, r0), a1 = pt(a, r1);
+    ln.setAttribute('x1', a0[0].toFixed(2)); ln.setAttribute('y1', a0[1].toFixed(2));
+    ln.setAttribute('x2', a1[0].toFixed(2)); ln.setAttribute('y2', a1[1].toFixed(2));
+  };
+  setLine(needle, angOf(DIAL_MIN), 5, R - 9);
+  setLine(needleBack, angOf(DIAL_MIN), 5, R - 9);
+  setLine(peak, angOf(DIAL_MIN), R - 19, R - 10);
+
+  const read = document.createElement('span');
+  read.className = 'dbread';
+  read.textContent = '-\u221e dB';
+  host.appendChild(read);
+
+  clip.style.cursor = 'pointer';
+  clip.addEventListener('click', () => { d.clipUntil = 0; clip.classList.remove('on'); });
+
+  const d = {
+    cur: DIAL_MIN, target: DIAL_MIN, peak: DIAL_MIN, peakAt: 0,
+    clipUntil: 0, read, needle, needleBack, peakEl: peak, clipEl: clip,
+    set(level) {
+      const db = Math.max(-60, Math.min(6, levelDb(level)));
+      d.target = db;
+      if (level >= 0.995) { d.clipUntil = performance.now() + 1500; clip.classList.add('on'); }
+    },
+    frame(now, dt) {
+      // Meter ballistics: 300 ms to get most of the way up, about a second to
+      // fall back, which is what makes a dial readable rather than twitchy.
+      const up = 1 - Math.pow(0.001, dt / 0.30);
+      const down = 1 - Math.pow(0.001, dt / 1.10);
+      d.cur += (d.target - d.cur) * (d.target > d.cur ? up : down);
+      if (d.cur > d.peak) { d.peak = d.cur; d.peakAt = now; }
+      else if (now - d.peakAt > 700) d.peak = Math.max(d.cur, d.peak - dt * 12);
+      setLine(d.needle, angOf(d.cur), 5, R - 9);
+      setLine(d.needleBack, angOf(d.cur), 5, R - 9);
+      setLine(d.peakEl, angOf(d.peak), R - 19, R - 10);
+      d.peakEl.style.opacity = (d.peak > DIAL_MIN + 0.5) ? .95 : 0;
+      d.read.textContent = (d.target <= -59 ? '-\u221e' : d.cur.toFixed(1) + ' dB');
+      // the figure takes the colour of the zone the needle is in
+      d.read.style.color = (d.cur >= 0) ? 'var(--red)' : (d.cur > -6 ? 'var(--amber)' : 'var(--fg)');
+      if (d.clipUntil && now > d.clipUntil) { d.clipUntil = 0; clip.classList.remove('on'); }
+    },
+  };
+  return d;
+}
+
+const dials = { mic: null, spk: null };
+let dialRaf = 0, dialLast = 0;
+
+function dialFrame(now) {
+  const dt = dialLast ? Math.min(0.25, (now - dialLast) / 1000) : 0.016;
+  dialLast = now;
+  if (dials.mic) dials.mic.frame(now, dt);
+  if (dials.spk) dials.spk.frame(now, dt);
+  dialRaf = requestAnimationFrame(dialFrame);
+}
+
+function initDials() {
+  if (dials.mic || !$('micdial')) return;
+  dials.mic = makeDial($('micdial'));
+  dials.spk = makeDial($('spkdial'));
+  dialRaf = requestAnimationFrame(dialFrame);
+}
+
+function dialLevels(mic, spk) {
+  initDials();
+  if (dials.mic) dials.mic.set(mic || 0);
+  if (dials.spk) dials.spk.set(spk || 0);
 }
 
 // ---------------------------------------------------------------------------
