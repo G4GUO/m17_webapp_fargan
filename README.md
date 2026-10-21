@@ -21,8 +21,10 @@ networking are upstream's.
   power meters, reflector selection, a live log and every console command — all
   on one page, sized to fit a screen.
 * **Audio where you want it.** The browser's own microphone and speaker, the
-  Pi's sound card, a Bluetooth speaker and headset, or any combination — the
-  speaker and the microphone are chosen separately.
+  Pi's sound card, a Bluetooth speaker and headset, or silence — chosen
+  separately for the speaker and the microphone in one Audio configuration box,
+  with the gain and volume applied on the Pi so the meters show what is really
+  going out.
 * **No hardware needed to try it.** The simulated radio runs the whole UI, the
   voice path and the logging on any Linux box.
 * **Optional extras:** the FARGAN neural receiver (16 kHz voice from the same
@@ -80,7 +82,7 @@ from the page or the console.
 | `-r sim\|pluto\|lime` | radio backend |
 | `-w PORT` | web UI port (default 8080) |
 | `-p IP` | Pluto address (default `pluto.local`) |
-| `-a browser\|pulse\|both\|none\|file:IN:OUT` | audio backend |
+| `-a browser\|pulse\|both\|none\|file:IN:OUT` | audio backend (the whole pair; the interface sets the two routes instead) |
 
 Browser audio needs one click to start (browser autoplay rules), and a browser
 will only give a web page the microphone on a secure origin — `localhost` or

@@ -371,80 +371,81 @@ def build(path: str) -> None:
         "started from the browser, so the two ways of transmitting do not fight each other.")
 
     m.h1("7. Audio \u2014 where your voice comes from and goes")
-    m.p("Set this once in the <b>Audio</b> panel; it stays set.")
+    m.p("The <b>Audio</b> panel has one button that matters: <b>Audio configuration&hellip;</b>. It "
+        "opens a box with two sets of choices \u2014 one for the <b>speaker</b> and one for the "
+        "<b>microphone</b> \u2014 and nothing changes until you press <b>Configure Audio</b>.")
     m.table([
-        ["Option", "What it means", "When to use it"],
-        ["Raspberry Pi sound card (direct)",
-         "Uses the microphone and speaker plugged into the Pi. Talks to the sound card directly.",
-         "<b>Recommended.</b> The most reliable choice."],
-        ["browser microphone / speaker",
-         "Uses the microphone and speakers of the computer you are browsing from, sent over the network.",
-         "When you are away from the Pi, or the Pi has no sound card. See the note below."],
-        ["Raspberry Pi sound card (PulseAudio)",
-         "The same card, but through the PulseAudio sound service.",
-         "Only if something else on the Pi needs to share the card. Direct is more reliable."],
-        ["browser + Pi sound card", "Both at once, listening in two places.", "Rarely needed."],
-        ["mute (no audio)", "Silence going out and coming in.", "For testing."],
-    ], [2.0, 4.2, 1.8])
-    m.p("A change takes effect at the start of your next transmission; the panel shows "
-        "<b>(applying...)</b> until then.")
+        ["Choice", "What it means", "When to use it"],
+        ["browser",
+         "The microphone and speakers of the computer you are browsing from, carried over the network.",
+         "When you are away from the Pi, or it has no sound card."],
+        ["soundcard",
+         "The microphone and speaker plugged into the Pi's sound card, talked to directly.",
+         "<b>Recommended</b> when a card is attached: the most reliable choice."],
+        ["bluetooth",
+         "A Bluetooth speaker or headset, chosen with <b>Configure Bluetooth</b>.",
+         "A tidy station with no wires. See below."],
+        ["mute",
+         "Nothing: silence is transmitted, and nothing is played.",
+         "For testing, or to silence one direction only."],
+    ], [1.6, 4.4, 2.0])
+    m.p("The two choices are independent, so the speaker can be a Bluetooth speaker while the "
+        "microphone stays on the sound card, or the browser can carry the sound while the Pi's card "
+        "takes the microphone. Press <b>Configure Audio</b> and the station detaches whatever that "
+        "direction was using, attaches what you asked for, and keeps the choice for the next start. "
+        "<b>(applying&hellip;)</b> means it takes effect at the start of the next transmit/receive "
+        "cycle \u2014 never in the middle of a transmission.")
+    m.note("If you ask for <b>bluetooth</b> before a device has been chosen, nothing moves: the "
+           "station says to use Configure Bluetooth first, and that direction stays where it was. "
+           "That is deliberate \u2014 a half-made request must not silence the station.")
+    m.h2("Configure Bluetooth")
+    m.p("<b>Configure Bluetooth</b> opens the list of devices the station already knows. Each row "
+        "has a <b>speaker</b> button and a <b>mic</b> button, there is a <b>scan</b> for new "
+        "devices, and a <b>sound card</b> row at the top to put either direction back on the card.")
+    m.p("Choosing a device here <b>remembers it and connects it, but does not move the audio</b>: "
+        "press <b>Configure Audio</b> afterwards to attach it. That way a half-chosen request never "
+        "takes the sound away.")
+    m.p("The two buttons are independent, so the SoundCore mini can carry the sound (A2DP, playback "
+        "only) while a headset carries the microphone (HFP, 8 kHz \u2014 exactly M17's own rate, so "
+        "nothing is lost against Codec2). A device a scan has just found is only <i>discovered</i>: "
+        "it shows <b>(not paired)</b> and a <b>pair</b> button instead, and nothing can connect it "
+        "until it is paired.")
+    m.p("If the device is switched off, or out of range, the station says so and keeps trying: it "
+        "picks the device up by itself as soon as it is switched on, without a restart. With no "
+        "sound card attached there is deliberately nothing to fall back to, so a Bluetooth-only "
+        "station is a proper arrangement, not a fault. Bluetooth audio needs the "
+        "<code>bluez-alsa</code> packages on the Pi; without them the box says so and everything "
+        "else is unchanged.")
+    m.h2("The two level controls, and the meters")
+    m.p("Beside the meters are <b>mic level</b> and <b>volume</b>. Both are applied on the Pi "
+        "itself: the microphone gain sits between the microphone and the modulator, and the volume "
+        "between the receiver and the speaker. That is what makes the meters worth watching \u2014 "
+        "the <b>mic</b> bar shows the level actually going out on air, not just what a browser "
+        "happened to capture, and the <b>spk</b> bar shows what is being played.")
+    m.p("The readouts are in decibels. <b>mic level</b> runs from 0 (silent) to 200% (+6 dB); 100% "
+        "is 0 dB and suits most microphones, so raise it if you sound quiet on air and lower it if "
+        "the bar is pinned while you speak normally. <b>volume</b> runs 0-100%, with 100% at 0 dB.")
+    m.p("Both are kept for the next start, and the console does the same: <b>micgain 150</b> and "
+        "<b>spkvol 60</b>.")
     m.h2("The card's own controls: the Mixer panel")
     m.p("A USB sound card has controls of its own \u2014 a volume, and often a microphone gain and "
-        "an automatic-gain switch. These are <b>not</b> the same as the application's volume: "
-        "they belong to the card, and one of them sitting in the wrong place is the usual reason "
-        "the audio looks healthy while nothing can actually be heard. A C-Media headset, for "
-        "instance, comes up at 29% (about -20 dB), which is quiet enough to lose received voice "
-        "completely.")
-    m.p("The <b>Mixer</b> panel lists whatever controls your card really has, and setting one "
-        "takes effect at once. Whatever you leave them at is remembered and applied again every "
-        "time the audio is opened \u2014 so a card that drops off USB and returns gets its levels "
-        "back with it, and a reboot does not undo them. The console does the same: <b>mixer</b> "
-        "lists the controls, and <b>mixer 0 100</b> sets one.")
-    m.h2("Bluetooth: a speaker and a microphone, chosen separately")
-    m.p("There is a <b>Bluetooth&hellip;</b> button beside the audio device. It opens a list of the "
-        "devices the station already knows \u2014 each with a <b>speaker</b> button and a <b>mic</b> "
-        "button \u2014 plus a <b>scan</b> to look for new ones and a <b>sound card</b> row at the top.")
-    m.p("The two buttons are <i>independent</i>: the speaker can be a Bluetooth speaker while the "
-        "microphone stays on the sound card, or a different device altogether. For example the "
-        "SoundCore mini can carry the sound (A2DP) while a headset carries the microphone. Press a "
-        "button and that one direction moves to that device; press the button that is already lit "
-        "and that direction goes back to the sound card. Both choices are remembered for the next "
-        "start.")
-    m.p("A device a scan has just found is only <i>discovered</i>: it is not paired yet, and nothing "
-        "can connect it until it is. Such a row shows <b>(not paired)</b> and offers a <b>pair</b> "
-        "button instead of the two direction buttons; press it, and once the device is paired the "
-        "<b>speaker</b> and <b>mic</b> buttons appear. Pairing can take a few seconds, and a "
-        "device that insists on a PIN will report that it failed rather than retrying silently.")
-    m.p("The status line beside the button reports what is actually true at that moment. A device "
-        "that has been switched off, or has gone out of range, stops showing <b>(connected)</b> "
-        "within a few seconds \u2014 the station asks the Bluetooth daemon in the background rather "
-        "than trusting what it saw when the device was chosen. If the device is connected but the "
-        "audio has fallen back to the sound card, the line says <b>connected, but the audio is on "
-        "the sound card</b> instead of pretending all is well.")
-    m.p("A Bluetooth device does one of two things, and which one it does is decided by the button "
-        "you press. <b>speaker</b> is A2DP: the best audio quality, but playback only, so the "
-        "microphone stays wherever it already is, and there is a delay of about a fifth of a second. "
-        "<b>mic</b> is HFP: it is the device's own microphone you talk into, and the audio is 8 kHz "
-        "mono \u2014 which is exactly M17's own rate, so nothing is lost against Codec2.")
-    m.p("The console does the same thing, and is the way to do it without the mouse: <b>bt</b> lists "
-        "the devices and what is in use, <b>bt pair &lt;address&gt;</b> pairs and trusts one, <b>bt "
-        "spk &lt;address&gt;</b> sends the speaker output to a device, <b>bt mic "
-        "&lt;address&gt;</b> takes the microphone from one, <b>bt spk off</b> and <b>bt mic "
-        "off</b> put each direction back on the sound card, <b>bt scan</b> looks for new devices "
-        "for twenty seconds, and <b>bt off</b> does both at once.")
-    m.p("If the device is switched off, or out of range, the audio stays on the sound card rather "
-        "than going silent \u2014 so press <b>speaker</b> or <b>headset</b> again once it is on. "
-        "With no sound card attached there is deliberately nothing to fall back to: the station "
-        "says so, waits, and picks the Bluetooth device up by itself as soon as it is switched on, "
-        "without a restart. Bluetooth audio needs the <code>bluez-alsa</code> packages on the Pi; "
-        "without them the button says so and everything else is unchanged.")
+        "an automatic-gain switch. These are <b>not</b> the same as the application's levels: they "
+        "belong to the card, and one of them sitting in the wrong place is the usual reason the "
+        "audio looks healthy while nothing can actually be heard. A C-Media headset, for instance, "
+        "comes up at 29% (about -20 dB), which is quiet enough to lose received voice completely.")
+    m.p("The <b>Mixer</b> panel lists whatever controls your card really has, and setting one takes "
+        "effect at once. Whatever you leave them at is remembered and applied again every time the "
+        "audio is opened \u2014 so a card that drops off USB and returns gets its levels back with "
+        "it, and a reboot does not undo them. The console does the same: <b>mixer</b> lists the "
+        "controls, and <b>mixer 0 100</b> sets one.")
     m.h2("If the browser refuses your microphone")
     m.p("Browsers only allow microphone access on a secure page. A page opened as "
         "<b>http://&lt;address&gt;:8080/</b> is not secure, so the microphone may be blocked. Either "
-        "open <b>http://localhost:8080/</b> in a browser on the Pi itself, or use the Pi's sound card "
-        "option instead \u2014 which avoids the problem completely and is what most users want.")
+        "open <b>http://localhost:8080/</b> in a browser on the Pi itself, or choose the Pi's sound "
+        "card instead \u2014 which avoids the problem completely and is what most users want. The "
+        "<b>enable browser audio</b> button beside the configuration button starts the browser's "
+        "audio by hand if a saved configuration needs it; Configure Audio does it for you otherwise.")
     m.h2("Blank frames before voice, and the transmit health line")
-    m.p("Next to the audio device there are two things worth knowing about.")
     m.p("<b>blank frames before voice</b> is the amount of silence sent at the start of each "
         "transmission, before your speech. It gives the receiving station time to lock onto your "
         "signal, so your first word is not clipped. The default is 4 (about 80 thousandths of a "
@@ -454,9 +455,6 @@ def build(path: str) -> None:
         "transmission. If it reports dropped samples, raise the blank frames a little and try again; "
         "if it keeps reporting drops, the Pi is too busy (close other programs) or something needs "
         "looking at by whoever maintains the system.")
-    m.p("<b>volume</b> and <b>mute</b> affect only what you hear in the browser. The small "
-        "<b>mic</b> and <b>spk</b> bars show the audio levels going out and coming in \u2014 the mic bar "
-        "should move when you speak.")
     m.pagebreak()
 
     # ------------------------------------------------------ 8. the panels in detail
@@ -526,12 +524,12 @@ def build(path: str) -> None:
     m.h2("Audio")
     m.table([
         ["Control", "What it does"],
-        ["audio device", "Where your voice comes from and goes - see section 7."],
+        ["Audio configuration\u2026", "Where the speaker and the microphone each come from and go - see section 7."],
+        ["enable browser audio", "Starts this page's own audio by hand, if a saved configuration needs it and Configure Audio has not been pressed."],
+        ["mic / spk bars", "The microphone level going out and the speaker level being played, both measured on the Pi after its own level controls."],
+        ["mic level / volume", "Microphone gain and speaker volume, applied on the Pi - see section 7."],
         ["mixer", "The sound card's own volume and gain controls - see section 7."],
         ["blank frames before voice", "Silence sent before your speech at the start of a transmission. Default 4."],
-        ["enable browser audio", "Must be pressed once (and permission given) before the browser can play or record audio."],
-        ["volume / mute", "What you hear in the browser."],
-        ["mic / spk bars", "Audio levels going out and coming in."],
     ], [2.3, 5.7])
 
     m.h2("Console")
@@ -562,13 +560,22 @@ def build(path: str) -> None:
         ["mode radio", "Normal mode: radio in, sound out. Alternatives: <b>loop</b> (audio loops back for "
                        "practice), <b>gate</b> (radio to reflector), <b>client</b> (sound to reflector). "
                        "Takes effect at once, and is kept for the next start."],
-        ["audio alsa", "Voice through the Pi sound card. Alternatives: <b>browser</b>, <b>pulse</b>, "
-                       "<b>both</b>, <b>none</b>."],
+        ["audio", "Which route the speaker and the microphone are on, and the two levels."],
+        ["audio apply spk bluetooth mic soundcard",
+         "What <b>Configure Audio</b> sends: attach these two routes. Each is <b>browser</b>, "
+         "<b>soundcard</b>, <b>bluetooth</b> or <b>mute</b>. Kept in config.txt."],
+        ["micgain 150", "Microphone gain as a percentage of unity (100 = 0 dB, 200 = +6 dB), applied "
+                        "before the modulator."],
+        ["spkvol 60", "Speaker volume 0-100% (100 = 0 dB), applied to received audio."],
+        ["audio alsa", "Both directions at once, the old way: <b>browser</b>, <b>alsa</b>, <b>both</b>, "
+                       "<b>none</b>, or <b>pulse</b>."],
         ["mixer", "List the sound card's own controls and what they are set to - see section 7."],
         ["mixer 0 100", "Set control number 0 to 100%. <b>on</b> and <b>off</b> also work, for a "
                         "switch. Kept in config.txt for the next start."],
         ["bt", "List the Bluetooth devices the station knows, and which is in use - see section 7."],
-        ["bt spk MAC", "Send the speaker output to that Bluetooth device (A2DP)."],
+        ["bt sel spk MAC", "Choose and connect a speaker without moving the audio - what Configure "
+                           "Bluetooth does. <b>bt sel mic MAC</b> is the microphone; <b>off</b> clears it."],
+        ["bt spk MAC", "Choose a Bluetooth speaker (A2DP) <i>and</i> move the speaker output to it."],
         ["bt spk off", "Put the speaker output back on the sound card."],
         ["bt mic MAC", "Take the microphone from that Bluetooth headset (HFP)."],
         ["bt mic off", "Put the microphone back on the sound card."],
@@ -612,8 +619,13 @@ def build(path: str) -> None:
          "The page lost contact with the Pi. Reload the page. If it stays offline, check the program "
          "is still running on the Pi."],
         ["Nothing comes out of the speaker",
-         "In Audio, make sure the Pi's sound card is selected, the volume is up and mute is off, and "
-         "that the speaker is plugged into the sound card (not the Pi's headphone socket)."],
+         "Press <b>Audio configuration\u2026</b> and check which route the speaker is on, that it is "
+         "not <b>mute</b>, and that <b>volume</b> is up. On <b>soundcard</b>, check the speaker is "
+         "plugged into the sound card (not the Pi's headphone socket) and look at the Mixer panel."],
+        ["I chose bluetooth but the audio did not move",
+         "Configure Bluetooth only chooses and connects a device; press <b>Configure Audio</b> to "
+         "attach it. If no device had been chosen, the station says so and leaves that direction "
+         "where it was."],
         ["The other station says my audio breaks up, or starts late",
          "Look at the transmit health line in the Audio panel. Raise <b>blank frames before voice</b> "
          "to 6-8 and try again. If it still reports dropped samples, the Pi is struggling with "
@@ -624,7 +636,8 @@ def build(path: str) -> None:
          "slightly."],
         ["The browser will not use my microphone",
          "Browsers only allow the microphone on a secure page. Use <b>http://localhost:8080/</b> on "
-         "the Pi itself, or select the Pi's sound card instead (section 7)."],
+         "the Pi itself, or route the microphone to <b>soundcard</b> or <b>bluetooth</b> in the "
+         "Audio configuration box (section 7)."],
         ["The light never goes to TX",
          "If the header says offline, the page cannot reach the Pi. Otherwise something else may be "
          "using the radio \u2014 stop and start the program."],

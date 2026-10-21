@@ -1,46 +1,135 @@
 // audio.cpp
 //
-// Audio dispatcher: the M17 code calls audio_input()/audio_output(); this
-// module decides which of the compiled back ends actually carries the audio.
+// Audio dispatcher.  The M17 code calls audio_input()/audio_output(); this
+// module decides which of the back ends actually carries the audio.
 //
+// The speaker and the microphone are routed *separately*, each to one of
+//
+//   mute       nothing at all
+//   browser    the web page, over the WebSocket (audio_web.cpp)
+//   soundcard  the Pi's sound card, direct through ALSA (audio_alsa.cpp)
+//   bluetooth  the device chosen in "Configure Bluetooth", which bluealsa
+//              presents to ALSA as an ordinary PCM
+//
+// which is what the interface's Audio configuration box selects.  The older
+// whole-pair back ends (alsa, browser, both, none, pulse, file) are still
+// accepted and simply map onto the two routes, so "-a alsa", "audio both" and
+// the file back end used by the tests go on working.
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "m17defines.h"
 #include "audio.h"
+#include "bluetooth.h"
 
-static AudioBackend m_backend = AUDIO_BROWSER;
+static AudioRoute m_r_out = AROUTE_BROWSER;   // what was asked for
+static AudioRoute m_r_in  = AROUTE_BROWSER;
+static AudioRoute m_open_out = AROUTE_MUTE;   // what is actually attached
+static AudioRoute m_open_in  = AROUTE_MUTE;
+static bool m_file;                           // -a file:... (test path)
 static bool m_mic_open;
 static bool m_spk_open;
-static AudioBackend m_pending = AUDIO_NONE;   // requested while open
+static bool m_change;                        // a change is waiting for a safe moment
 
 static double m_mic_level;
 static double m_spk_level;
 
+// Level controls, applied here on the Pi rather than in the browser: the gain
+// sits between the microphone and the modulator, and the volume between the
+// decoder and the speaker, so the meters measure the audio that is really being
+// transmitted / played.
+static double m_mic_gain = 1.0;
+static double m_spk_vol  = 0.8;
+
 // ---------------------------------------------------------------------------
-static bool want_pulse(AudioBackend b) {
-    return b == AUDIO_PULSE || b == AUDIO_BOTH;
-}
-static bool want_browser(AudioBackend b) {
-    return b == AUDIO_BROWSER || b == AUDIO_BOTH;
-}
-static bool want_file(AudioBackend b) {
-    return b == AUDIO_FILE;
-}
-static bool want_alsa(AudioBackend b) {
-    return b == AUDIO_ALSA;
+// Routes
+// ---------------------------------------------------------------------------
+const char *audio_route_name(AudioRoute r) {
+    switch (r) {
+        case AROUTE_BROWSER: return "browser";
+        case AROUTE_CARD:    return "soundcard";
+        case AROUTE_BT:      return "bluetooth";
+        case AROUTE_PULSE:   return "pulse";
+        default:             return "mute";
+    }
 }
 
-bool audio_set_backend(AudioBackend b) {
-    if (b == AUDIO_NONE) {
-        // Nothing to do: silence in, discard out
+AudioRoute audio_parse_route(const char *name) {
+    if (!name || !name[0]) return AROUTE_MUTE;
+    if (strcasecmp(name, "browser") == 0 || strcasecmp(name, "web") == 0)  return AROUTE_BROWSER;
+    if (strcasecmp(name, "soundcard") == 0 || strcasecmp(name, "card") == 0 ||
+        strcasecmp(name, "alsa") == 0 || strcasecmp(name, "local") == 0)   return AROUTE_CARD;
+    if (strcasecmp(name, "bluetooth") == 0 || strcasecmp(name, "bt") == 0)  return AROUTE_BT;
+    if (strcasecmp(name, "pulse") == 0 || strcasecmp(name, "pulseaudio") == 0) return AROUTE_PULSE;
+    if (strcasecmp(name, "mute") == 0 || strcasecmp(name, "none") == 0 ||
+        strcasecmp(name, "off") == 0)                                     return AROUTE_MUTE;
+    return AROUTE_MUTE;
+}
+
+AudioRoute audio_get_route(bool out) { return out ? m_r_out : m_r_in; }
+
+void audio_route_summary(char *out, int len) {
+    if (!out || len <= 0) return;
+    if (m_file) { snprintf(out, (size_t)len, "file"); return; }
+    if (m_r_out == m_r_in) { snprintf(out, (size_t)len, "%s", audio_route_name(m_r_out)); return; }
+    snprintf(out, (size_t)len, "%s / %s", audio_route_name(m_r_out), audio_route_name(m_r_in));
+}
+
+// Point the ALSA back end at the device each direction asks for.  A Bluetooth
+// direction is a bluealsa PCM; the sound card direction is whatever card is
+// present, and for capture that has to be resolved explicitly, because leaving
+// the capture device empty makes it follow the *playback* device - which is the
+// Bluetooth speaker when the two directions are on different things.
+static void sync_devices(void) {
+#ifdef HAVE_ALSA
+    char play[160], cap[160];
+    play[0] = cap[0] = 0;
+    bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
+
+    if (m_r_out == AROUTE_BT) {
+        if (play[0]) audio_alsa_set_device(play);
+        // No device chosen: leave the request alone and let the open fall back
+        // to the card, saying so, rather than going silent.
+    } else if (m_r_out == AROUTE_CARD) {
+        audio_alsa_set_device("");
     }
-    m_backend = b;
-    if (m_mic_open || m_spk_open) {
-        m_pending = b;   // applied on the next close
+
+    if (m_r_in == AROUTE_BT) {
+        if (cap[0]) audio_alsa_set_capture_device(cap);
+    } else if (m_r_in == AROUTE_CARD) {
+        audio_alsa_capture_follow_card();
+    }
+#endif
+}
+
+void audio_apply_routes(AudioRoute out, AudioRoute in) {
+    m_r_out = out;
+    m_r_in  = in;
+    sync_devices();
+    audio_request_reopen();
+}
+
+void audio_set_route(bool out, AudioRoute r) {
+    if (out) audio_apply_routes(r, m_r_in);
+    else     audio_apply_routes(m_r_out, r);
+}
+
+// ---------------------------------------------------------------------------
+// The whole-pair back ends, kept for -a and the console
+// ---------------------------------------------------------------------------
+bool audio_set_backend(AudioBackend b) {
+    switch (b) {
+        case AUDIO_ALSA:    m_file = false; audio_apply_routes(AROUTE_CARD, AROUTE_CARD); break;
+        case AUDIO_PULSE:   m_file = false; audio_apply_routes(AROUTE_PULSE, AROUTE_PULSE); break;
+        case AUDIO_BROWSER: m_file = false; audio_apply_routes(AROUTE_BROWSER, AROUTE_BROWSER); break;
+        case AUDIO_BOTH:    m_file = false; audio_apply_routes(AROUTE_CARD, AROUTE_BROWSER); break;
+        case AUDIO_FILE:    m_file = true;  break;   // the routes stay as configured; the file carries it
+        case AUDIO_NONE:
+        default:            m_file = false; audio_apply_routes(AROUTE_MUTE, AROUTE_MUTE); break;
     }
     return true;
 }
@@ -67,7 +156,20 @@ const char *audio_backend_name(AudioBackend b) {
     }
 }
 
-AudioBackend audio_get_backend(void) { return m_backend; }
+// The pair, derived from the two routes: what the state reports and what the
+// old "audio" command shows.
+AudioBackend audio_get_backend(void) {
+    if (m_file) return AUDIO_FILE;
+    AudioRoute o = m_r_out, i = m_r_in;
+    if (o == AROUTE_PULSE || i == AROUTE_PULSE) return AUDIO_PULSE;
+    if (o == AROUTE_MUTE && i == AROUTE_MUTE) return AUDIO_NONE;
+    if (o == AROUTE_BROWSER && i == AROUTE_BROWSER) return AUDIO_BROWSER;
+    if (o == AROUTE_CARD && i == AROUTE_BROWSER) return AUDIO_BOTH;
+    return AUDIO_ALSA;      // card or Bluetooth: the ALSA back end carries it
+}
+
+static bool use_alsa_out(void) { return m_r_out == AROUTE_CARD || m_r_out == AROUTE_BT; }
+static bool use_alsa_in(void)  { return m_r_in  == AROUTE_CARD || m_r_in  == AROUTE_BT; }
 
 // A change of device can need more than one attempt: a Bluetooth headset's SCO
 // link is created when the first of its two streams opens, so the other one has
@@ -79,52 +181,46 @@ static struct timespec m_retry_at;    // ...and not before this
 // time they are closed/opened (the M17 code does that per transmit/receive
 // cycle), so the UI can say so and the radio loop can apply it promptly.
 bool audio_backend_pending(void) {
-    if (m_pending == AUDIO_NONE) return false;
+    // "Pending" means there is something to do before the audio is next used,
+    // so it is only ever true while a stream is open.  A station whose mode has
+    // no local audio at all - gate bridges the radio to a reflector - never
+    // opens one, and must not sit there claiming to be applying a change.
+    bool open_any = m_mic_open || m_spk_open;
+    if (!open_any) return false;
+    if (m_change) return true;
+    if (m_open_in != m_r_in || m_open_out != m_r_out) return true;
 #ifdef HAVE_ALSA
-    // Selecting the device that is already open is not a change: re-opening it
-    // would only risk losing the stream.  "Nothing is open" is different - that
-    // is a device that has not come up yet, and it has to keep being tried.
-    bool missing = audio_alsa_side_missing();
-    if (!missing && m_pending == AUDIO_ALSA && m_backend == AUDIO_ALSA &&
-        !audio_alsa_device_changed()) {
-        bool mic = false, spk = false;
-        audio_local_streams(&mic, &spk);
-        if (mic || spk) return false;
-    }
-    // A device that was not up yet - a Bluetooth headset's SCO link is created
-    // when the first of its streams opens, so the other one has to wait for it -
-    // gets a few more attempts, spaced out.
-    if (m_retry_left <= 0) {
-        // The burst is spent.  A device asked for by name is still worth a slow
-        // retry: a speaker that is switched on twenty minutes later has to be
-        // picked up without restarting the station, and with no sound card there
-        // is nothing else to fall back to.
-        if (!audio_alsa_device_requested() && !missing) return false;
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        if (now.tv_sec - m_retry_at.tv_sec < 15) return false;
-        m_retry_at = now;
-        return true;
-    }
-    {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
+    if (!use_alsa_in() && !use_alsa_out()) return false;
+    // A Bluetooth direction that is selected but not open - the SCO link may not
+    // exist yet - is worth retrying.  A card that is simply not on the bus is
+    // not: there is nothing to wait for, and retrying fills the log for ever.
+    if (!audio_alsa_out_missing() && !audio_alsa_in_missing())
+        return audio_alsa_device_changed();
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (m_retry_left > 0) {                 // a burst, a couple of seconds apart
         if (now.tv_sec < m_retry_at.tv_sec) return false;
         m_retry_left--;
         m_retry_at = now;
         m_retry_at.tv_sec += 2;
+        return true;
     }
-#endif
+    // Then slowly, for ever: a speaker switched on twenty minutes later has to
+    // be picked up without restarting the station.
+    if (now.tv_sec - m_retry_at.tv_sec < 15) return false;
+    m_retry_at = now;
     return true;
+#else
+    return false;
+#endif
 }
 
 void audio_request_reopen(void) {
-    // Always mark it, even with nothing open.  The interesting case is a device
-    // that has *not* opened yet - a Bluetooth headset that is not connected, or
-    // a card that has been unplugged and put back - and with no stream open there
-    // was no close/open cycle to hang the change on, so the station used to sit
-    // on a dead device until the next restart.
-    m_pending = m_backend;
+    // Mark it when there is a stream to close and open again.  With nothing open
+    // there is no cycle to hang the change on - the next open simply uses the
+    // new route - but the retry burst is set anyway, so a device that was asked
+    // for by name and is not there yet is tried again shortly.
+    if (m_mic_open || m_spk_open) m_change = true;
     m_retry_left = 8;                // a Bluetooth profile can take a moment
     clock_gettime(CLOCK_MONOTONIC, &m_retry_at);
 }
@@ -133,19 +229,18 @@ void audio_request_reopen(void) {
 // moved is touched: closing both to retry one is what made a working speaker
 // and a failed microphone take turns succeeding.
 void audio_apply_pending(void) {
-    if (m_pending != AUDIO_NONE) { m_backend = m_pending; m_pending = AUDIO_NONE; }
+    bool in_changed  = (m_open_in  != m_r_in);
+    bool out_changed = (m_open_out != m_r_out);
+    bool in_missing = false, out_missing = false;
 #ifdef HAVE_ALSA
-    if (!want_alsa(m_backend)) return;
-    if (audio_alsa_device_changed()) {
-        audio_mic_close(); audio_mic_open();
-        audio_spk_close(); audio_spk_open();
-        return;
-    }
-    if (audio_alsa_in_missing())  { audio_mic_close(); audio_mic_open(); }
-    if (audio_alsa_out_missing()) { audio_spk_close(); audio_spk_open(); }
+    in_missing  = audio_alsa_in_missing();
+    out_missing = audio_alsa_out_missing();
 #endif
+    if (in_changed || in_missing)   { audio_mic_close(); audio_mic_open(); }
+    if (out_changed || out_missing) { audio_spk_close(); audio_spk_open(); }
 }
 
+// ---------------------------------------------------------------------------
 bool audio_have_pulse(void) {
 #ifdef HAVE_PULSE
     return true;
@@ -166,17 +261,17 @@ bool audio_have_browser_audio(void) { return true; }
 
 bool audio_local_ready(void) {
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) return audio_alsa_ready();
+    if (use_alsa_out() || use_alsa_in()) return audio_alsa_ready();
 #endif
 #ifdef HAVE_PULSE
-    if (want_pulse(m_backend)) return audio_pulse_ready();
+    if (m_r_out == AROUTE_PULSE || m_r_in == AROUTE_PULSE) return audio_pulse_ready();
 #endif
     return false;
 }
 
 const char *audio_local_device(void) {
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) return audio_alsa_device();
+    if (use_alsa_out() || use_alsa_in()) return audio_alsa_device();
 #endif
     return "";
 }
@@ -185,15 +280,18 @@ const char *audio_local_device(void) {
 // knows exactly; the others report their own readiness).
 void audio_local_streams(bool *mic, bool *spk) {
     bool m = false, s = false;
+    if (m_file) { m = s = true; }
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) { m = audio_alsa_mic_is_open(); s = audio_alsa_spk_is_open(); }
+    if (use_alsa_in())  m = audio_alsa_mic_is_open();
+    if (use_alsa_out()) s = audio_alsa_spk_is_open();
 #endif
-    if (want_pulse(m_backend)) {
 #ifdef HAVE_PULSE
-        m = s = audio_pulse_ready();
-#endif
+    if (m_r_in == AROUTE_PULSE || m_r_out == AROUTE_PULSE) {
+        bool r = audio_pulse_ready();
+        if (m_r_in  == AROUTE_PULSE) m = r;
+        if (m_r_out == AROUTE_PULSE) s = r;
     }
-    if (want_file(m_backend)) m = s = true;
+#endif
     if (mic) *mic = m;
     if (spk) *spk = s;
 }
@@ -201,55 +299,72 @@ void audio_local_streams(bool *mic, bool *spk) {
 long audio_tx_dropped(void) {
     long n = 0;
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) n += audio_alsa_starved();
+    if (use_alsa_in()) n += audio_alsa_starved();
 #endif
-    if (want_browser(m_backend)) n += audio_web_mic_starved();
+    if (m_r_in == AROUTE_BROWSER) n += audio_web_mic_starved();
     return n;
 }
 
 long audio_tx_overruns(void) {
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) return audio_alsa_overruns();
+    if (use_alsa_in()) return audio_alsa_overruns();
 #endif
     return 0;
 }
 
 const char *audio_backend_error(void) {
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend) && audio_alsa_error()[0])
+    if ((use_alsa_in() || use_alsa_out()) && audio_alsa_error()[0])
         return audio_alsa_error();
 #endif
 #ifdef HAVE_PULSE
-    if (want_pulse(m_backend) && audio_pulse_error()[0])
+    if ((m_r_in == AROUTE_PULSE || m_r_out == AROUTE_PULSE) && audio_pulse_error()[0])
         return audio_pulse_error();
 #endif
     return "";
 }
 
 void audio_backend_status(char *out, int len) {
-    snprintf(out, len, "%s", audio_backend_name(m_backend));
+    audio_route_summary(out, len);
 }
 
 // ---------------------------------------------------------------------------
 void audio_mic_open(void) {
     audio_pace_reset();
-#ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) audio_alsa_mic_open();
-#endif
-#ifdef HAVE_PULSE
-    if (want_pulse(m_backend)) audio_pulse_mic_open();
-#endif
-    if (want_browser(m_backend)) audio_web_mic_open();
-    if (want_file(m_backend))    audio_file_mic_open();
     m_mic_open = true;
+
+    if (m_file) {
+        audio_file_mic_open();
+        m_open_in = m_r_in;             // the file is the carrier: nothing pending
+        return;
+    }
+
+    switch (m_r_in) {
+        case AROUTE_BROWSER: audio_web_mic_open(); break;
+        case AROUTE_CARD:
+        case AROUTE_BT:
+#ifdef HAVE_ALSA
+            audio_alsa_mic_open();
+#endif
+            break;
+        case AROUTE_PULSE:
+#ifdef HAVE_PULSE
+            audio_pulse_mic_open();
+#endif
+            break;
+        default: break;                 // mute: silence in
+    }
+    m_open_in = m_r_in;
+
     // If the device asked for was not there (a Bluetooth device still coming
     // up), leave the request standing so the next cycle tries again.
-    bool fell = false;
+    bool fell = false, named = false;
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) fell = audio_alsa_fell_back();
+    if (use_alsa_in()) fell = audio_alsa_fell_back();
+    named = audio_alsa_in_missing() || audio_alsa_out_missing();
 #endif
-    if (fell) { m_pending = m_backend; if (m_retry_left <= 0) m_retry_left = 8; }
-    else      m_pending = AUDIO_NONE;
+    if (fell && named) { if (m_retry_left <= 0) m_retry_left = 8; audio_request_reopen(); }
+    else if (m_open_in == m_r_in && m_open_out == m_r_out) m_change = false;
 }
 
 void audio_mic_close(void) {
@@ -262,25 +377,42 @@ void audio_mic_close(void) {
     audio_web_mic_close();
     audio_file_mic_close();
     m_mic_open = false;
-    if (m_pending != AUDIO_NONE) { m_backend = m_pending; m_pending = AUDIO_NONE; }
+    m_open_in = AROUTE_MUTE;
 }
 
 void audio_spk_open(void) {
-#ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) audio_alsa_spk_open();
-#endif
-#ifdef HAVE_PULSE
-    if (want_pulse(m_backend)) audio_pulse_spk_open();
-#endif
-    if (want_browser(m_backend)) audio_web_spk_open();
-    if (want_file(m_backend))    audio_file_spk_open();
     m_spk_open = true;
-    bool fell = false;
+
+    if (m_file) {
+        audio_file_spk_open();
+        m_open_out = m_r_out;
+        return;
+    }
+
+    switch (m_r_out) {
+        case AROUTE_BROWSER: audio_web_spk_open(); break;
+        case AROUTE_CARD:
+        case AROUTE_BT:
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) fell = audio_alsa_fell_back();
+            audio_alsa_spk_open();
 #endif
-    if (fell) { m_pending = m_backend; if (m_retry_left <= 0) m_retry_left = 8; }
-    else      m_pending = AUDIO_NONE;
+            break;
+        case AROUTE_PULSE:
+#ifdef HAVE_PULSE
+            audio_pulse_spk_open();
+#endif
+            break;
+        default: break;                 // mute: discard
+    }
+    m_open_out = m_r_out;
+
+    bool fell = false, named = false;
+#ifdef HAVE_ALSA
+    if (use_alsa_out()) fell = audio_alsa_fell_back();
+    named = audio_alsa_in_missing() || audio_alsa_out_missing();
+#endif
+    if (fell && named) { if (m_retry_left <= 0) m_retry_left = 8; audio_request_reopen(); }
+    else if (m_open_in == m_r_in && m_open_out == m_r_out) m_change = false;
 }
 
 void audio_spk_close(void) {
@@ -293,7 +425,7 @@ void audio_spk_close(void) {
     audio_web_spk_close();
     audio_file_spk_close();
     m_spk_open = false;
-    if (m_pending != AUDIO_NONE) { m_backend = m_pending; m_pending = AUDIO_NONE; }
+    m_open_out = AROUTE_MUTE;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,71 +482,90 @@ static void level_update(double *acc, const int16_t *s, int len) {
     if (*acc > 1.0) *acc = 1.0;
 }
 
+// The microphone gain, applied to the samples about to be encoded: this is the
+// point the meter is taken from, so the VU meter reads the level the modulator
+// gets rather than a level the browser happened to see.
+static void apply_gain(int16_t *s, int len, double gain) {
+    if (gain == 1.0 || len <= 0) return;
+    for (int i = 0; i < len; i++) {
+        double v = s[i] * gain;
+        if (v >  32767.0) v =  32767.0;
+        if (v < -32768.0) v = -32768.0;
+        s[i] = (int16_t)(v < 0 ? v - 0.5 : v + 0.5);
+    }
+}
+
 void audio_input(int16_t *s, int len) {
-    struct timespec t1;
-    (void)t1;
+    if (len <= 0) return;
 #ifdef M17WEB_DIAG
     static int ni = 0;
     if ((ni++ % 200) == 0)
-        fprintf(stdout, "diag-audio: in  len=%d mic_open=%d backend=%s\n", len, m_mic_open,
-                audio_backend_name(m_backend)), fflush(stdout);
+        fprintf(stdout, "diag-audio: in  len=%d mic_open=%d routes=%s/%s\n", len, m_mic_open,
+                audio_route_name(m_r_in), audio_route_name(m_r_out)), fflush(stdout);
 #endif
-    memset(s, 0, sizeof(int16_t) * len);
+    memset(s, 0, sizeof(int16_t) * (size_t)len);
     if (!m_mic_open) return;
 
-    if (want_browser(m_backend)) {
-        // Preferred source when a browser is streaming; falls through to
-        // PulseAudio/file when nobody is.
-        if (audio_web_input(s, len) > 0) {
-            level_update(&m_mic_level, s, len);
-            audio_pace(len);
-            return;
-        }
-    }
-    if (want_file(m_backend)) {
+    if (m_file) {
         audio_file_input(s, len);
+        apply_gain(s, len, m_mic_gain);
         level_update(&m_mic_level, s, len);
         audio_pace(len);
         return;
     }
+
+    switch (m_r_in) {
+        case AROUTE_BROWSER:
+            audio_web_input(s, len);
+            break;
+        case AROUTE_CARD:
+        case AROUTE_BT:
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) {
-        audio_alsa_input(s, len);
-        level_update(&m_mic_level, s, len);
-        audio_pace(len);
-        return;
-    }
+            audio_alsa_input(s, len);
 #endif
+            break;
+        case AROUTE_PULSE:
 #ifdef HAVE_PULSE
-    if (want_pulse(m_backend)) {
-        audio_pulse_input(s, len);
-        level_update(&m_mic_level, s, len);
-        audio_pace(len);
-        return;
-    }
+            audio_pulse_input(s, len);
 #endif
-    m_mic_level = 0;
+            break;
+        default: break;                     // mute: stays silent
+    }
+    apply_gain(s, len, m_mic_gain);
+    level_update(&m_mic_level, s, len);
     audio_pace(len);
 }
 
 void audio_output(int16_t *s, int len) {
+    if (len <= 0) return;
 #ifdef M17WEB_DIAG
     static int no = 0;
     if ((no++ % 50) == 0)
-        fprintf(stdout, "diag-audio: out len=%d spk_open=%d backend=%s first=%d\n", len, m_spk_open,
-                audio_backend_name(m_backend), (s && len > 0) ? s[0] : 0), fflush(stdout);
+        fprintf(stdout, "diag-audio: out len=%d spk_open=%d routes=%s/%s first=%d\n", len, m_spk_open,
+                audio_route_name(m_r_out), audio_route_name(m_r_in), s[0]), fflush(stdout);
 #endif
-    if (len <= 0) return;
+    double vol = m_spk_vol;
+    apply_gain(s, len, vol);
     level_update(&m_spk_level, s, len);
     if (!m_spk_open) return;
+
+    if (m_file) { audio_file_output(s, len); return; }
+
+    switch (m_r_out) {
+        case AROUTE_BROWSER: audio_web_output(s, len); break;
+        case AROUTE_CARD:
+        case AROUTE_BT:
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) audio_alsa_output(s, len);
+            audio_alsa_output(s, len);
 #endif
+            break;
+        case AROUTE_PULSE:
 #ifdef HAVE_PULSE
-    if (want_pulse(m_backend)) audio_pulse_output(s, len);
+            audio_pulse_output(s, len);
 #endif
-    if (want_browser(m_backend)) audio_web_output(s, len);
-    if (want_file(m_backend))    audio_file_output(s, len);
+            break;
+        default: break;                     // mute: discarded
+    }
 }
 
 // Drop microphone audio captured before the transmitter was ready.  Called at
@@ -422,13 +573,13 @@ void audio_output(int16_t *s, int len) {
 // first and the whole over lags the microphone by the ring's depth.
 void audio_input_flush(void) {
 #ifdef HAVE_ALSA
-    if (want_alsa(m_backend)) audio_alsa_flush();
+    if (use_alsa_in() || use_alsa_out()) audio_alsa_flush();
 #endif
 #ifdef HAVE_PULSE
     audio_pulse_flush();
 #endif
-    if (want_browser(m_backend)) audio_web_mic_flush();
-    if (want_file(m_backend)) audio_file_mic_close();
+    audio_web_mic_flush();
+    if (m_file) audio_file_mic_close();
 }
 
 void audio_output_flush(void) {
@@ -439,3 +590,20 @@ void audio_output_flush(void) {
 
 double audio_get_mic_level(void) { return m_mic_level; }
 double audio_get_spk_level(void) { return m_spk_level; }
+
+// ---------------------------------------------------------------------------
+void audio_set_mic_gain(double g) {
+    if (g < 0) g = 0;
+    if (g > 4) g = 4;
+    m_mic_gain = g;
+}
+
+double audio_get_mic_gain(void) { return m_mic_gain; }
+
+void audio_set_spk_vol(double v) {
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+    m_spk_vol = v;
+}
+
+double audio_get_spk_vol(void) { return m_spk_vol; }

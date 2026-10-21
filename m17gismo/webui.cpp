@@ -235,9 +235,21 @@ static void build_state(char *out, int len) {
     o = json_add(out, len, o, ",\"frames\":%u,\"gerr\":%u", db->n_frames, db->g_errors);
     o = json_add(out, len, o, ",\"ref\":{\"name\":\"%s\",\"module\":\"%c\",\"connected\":%s}",
                  ref, mod, m17_net_connected() ? "true" : "false");
-    o = json_add(out, len, o, ",\"audio\":\"%s\",\"audio_pending\":%s",
-                 audio_backend_name(audio_get_backend()),
-                 audio_backend_pending() ? "true" : "false");
+    {
+        // The two directions are routed separately, which is what the Audio
+        // configuration box selects; "audio" keeps the old whole-pair summary
+        // for anything that still reads it (a top bar, a script).
+        char sum[48];
+        audio_route_summary(sum, sizeof(sum));
+        o = json_add(out, len, o, ",\"audio\":\"%s\",\"audio_pending\":%s"
+                     ",\"spk_route\":\"%s\",\"mic_route\":\"%s\""
+                     ",\"mic_gain\":%.3f,\"spk_vol\":%.3f",
+                     sum,
+                     audio_backend_pending() ? "true" : "false",
+                     audio_route_name(audio_get_route(true)),
+                     audio_route_name(audio_get_route(false)),
+                     audio_get_mic_gain(), audio_get_spk_vol());
+    }
     o = json_add(out, len, o, ",\"pulse\":{\"compiled\":%s,\"ready\":%s,\"error\":\"%s\"}",
                  audio_have_pulse() ? "true" : "false",
                  (audio_get_backend() == AUDIO_PULSE && audio_local_ready()) ? "true" : "false",

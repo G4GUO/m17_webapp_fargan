@@ -93,12 +93,28 @@ button.mini { font-size: .8rem; padding: .25rem .5rem; }
 .ptt-button:disabled { filter: grayscale(.6); }
 
 /* Bluetooth audio dialog */
-#btdlg {
+#btdlg, #audiodlg {
   min-width: 32rem; max-width: 46rem; background: var(--panel); color: inherit;
   border: 1px solid var(--line); border-radius: .5rem; padding: 1rem;
 }
-#btdlg::backdrop { background: rgba(0,0,0,.55); }
-#btdlg h2 { margin: 0 0 .5rem; font-size: 1rem; }
+#btdlg::backdrop, #audiodlg::backdrop { background: rgba(0,0,0,.55); }
+#btdlg h2, #audiodlg h2 { margin: 0 0 .5rem; font-size: 1rem; }
+
+/* Audio configuration: the speaker's four choices beside the microphone's */
+.cfgcols { display: flex; gap: .8rem; flex-wrap: wrap; margin: .6rem 0 .2rem; }
+fieldset.cfgcol {
+  flex: 1 1 13rem; border: 1px solid var(--line); border-radius: .4rem;
+  padding: .45rem .6rem .55rem; display: flex; flex-direction: column; gap: .3rem;
+}
+fieldset.cfgcol legend { color: var(--dim); font-size: .74rem; text-transform: uppercase; letter-spacing: .08em; padding: 0 .3rem; }
+fieldset.cfgcol label.chk { font-size: .85rem; }
+button.wide { flex: 1 1 auto; }
+
+/* The level meters, and the two level controls under them */
+.vu { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
+label.slider { flex: 1 1 10rem; }
+label.slider output { color: var(--fg); font-variant-numeric: tabular-nums; }
+label.slider input[type=range] { width: 100%; max-width: 12rem; }
 .btlist {
   display: flex; flex-direction: column; gap: .35rem;
   margin: .6rem 0; max-height: 16rem; overflow: auto;

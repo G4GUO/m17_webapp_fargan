@@ -58,8 +58,10 @@ function handleJson(txt) {
     case 'help': $('help').textContent = (m.lines || []).join('\n'); break;
     case 'clear': $('log').innerHTML = ''; break;
     case 'refs': fillRefs(m.names); break;
-    case 'hello': checkStamp(m.stamp); break;
-    case 'hello': addLog('info', 'connected to ' + (m.app || 'm17web') + ' (protocol ' + m.proto + ')'); break;
+    case 'hello':
+      checkStamp(m.stamp);
+      addLog('info', 'connected to ' + (m.app || 'm17web') + ' (protocol ' + m.proto + ')');
+      break;
   }
 }
 
@@ -117,8 +119,7 @@ function applyState(s) {
     rs.className = 'badge' + (s.ref.connected ? ' ok' : '');
   }
 
-  if (document.activeElement !== $('audioselect')) $('audioselect').value = s.audio || 'browser';
-  renderAudioStatus(s);
+  renderAudio(s);
   renderTxHealth(s);
   renderPosition(s);
   renderCompass(s);
@@ -131,57 +132,89 @@ function applyState(s) {
   $('simrow').style.display = (s.radio === 'sim') ? 'flex' : 'none';
 }
 
-function renderAudioStatus(s) {
-  const p = s.pulse || {};
-  const a = s.alsa || {};
-  const el = $('audiostatus');
-  const pend = $('audiopending');
+function dbLabel(g) {
+  g = Number(g);
+  if (!(g > 0.001)) return '-inf dB';
+  return (20 * Math.log10(g)).toFixed(1) + ' dB';
+}
 
-  if (s.audio === 'alsa' || s.audio === 'pulse') {
-    const isAlsa = (s.audio === 'alsa');
-    const info = isAlsa ? a : p;
-    const which = isAlsa ? 'ALSA' : 'PulseAudio';
-    if (!info.compiled) {
-      el.textContent = 'this build has no ' + which + ' support (rebuild with ' +
-        (isAlsa ? 'ALSA' : 'PULSE') + '=1)';
-      el.style.color = 'var(--amber)';
-    } else if (info.error) {
-      el.textContent = which + ' problem: ' + info.error;
-      el.style.color = 'var(--red)';
-    } else if (s.spk_open || s.mic_open || info.ready) {
-      // Report the streams that are really open: the microphone is closed
-      // while receiving, by design, and a failed open can leave an error
-      // string behind even though the speaker came up fine.
-      const dev = isAlsa ? (' (' + (a.device || 'default') + ')') : ' (PulseAudio)';
-      const what = s.spk_open && s.mic_open ? 'speaker and microphone open'
-                 : s.spk_open ? 'speaker open, microphone opens when you transmit'
-                 : s.mic_open ? 'microphone open, speaker not open'
-                 : 'streams opening';
-      el.textContent = 'Pi sound card in use' + dev + ' - ' + what;
-      el.style.color = s.spk_open || s.mic_open ? 'var(--green)' : 'var(--amber)';
-      if (info.error && !s.spk_open) {
-        el.textContent = 'Pi sound card: speaker not open - ' + info.error;
-        el.style.color = 'var(--red)';
-      }
-    } else {
-      el.textContent = 'Pi sound card (' + which + ') selected - opens at the next ' +
-        'transmit/receive cycle';
-      el.style.color = 'var(--amber)';
-    }
-    pend.textContent = s.audio_pending ? '(applying...)' : '';
-  } else if (s.audio === 'both') {
-    el.textContent = 'browser audio + Pi sound card';
-    el.style.color = 'var(--green)';
-    pend.textContent = s.audio_pending ? '(applying...)' : '';
-  } else if (s.audio === 'none') {
-    el.textContent = 'audio muted';
-    el.style.color = 'var(--dim)';
-    pend.textContent = '';
-  } else {
-    el.textContent = 'browser audio' + (audioReady ? ' enabled' : ' not enabled yet');
-    el.style.color = audioReady ? 'var(--green)' : 'var(--dim)';
-    pend.textContent = '';
+function routeLabel(r) {
+  return r === 'soundcard' ? 'sound card' : r;
+}
+
+// The configuration box's radios: they follow the station's own choice, except
+// while the box is open and a different one is being picked.  Nothing is
+// applied until Configure Audio is pressed.
+let cfgOpen = false, cfgReopen = false;
+
+function setRoutes(spk, mic) {
+  document.querySelectorAll('input[name=spkroute]').forEach((r) => { r.checked = (r.value === spk); });
+  document.querySelectorAll('input[name=microute]').forEach((r) => { r.checked = (r.value === mic); });
+}
+
+function radioValue(name) {
+  const el = document.querySelector('input[name=' + name + ']:checked');
+  return el ? el.value : '';
+}
+
+// The speaker and the microphone, and the two level controls beside the meters.
+// Both levels are applied on the Pi - the gain between the microphone and the
+// modulator, the volume between the decoder and the speaker - so the meters
+// show the audio that is really going out.
+function renderAudio(s) {
+  const a = s.alsa || {};
+  const spk = s.spk_route || 'mute', mic = s.mic_route || 'mute';
+  const badge = $('audiosummary');
+  if (badge) badge.textContent = 'out ' + routeLabel(spk) + ' / in ' + routeLabel(mic);
+
+  const mg = (s.mic_gain === undefined) ? 1 : s.mic_gain;
+  const sv = (s.spk_vol === undefined) ? 0.8 : s.spk_vol;
+  if (document.activeElement !== $('micgain')) {
+    $('micgain').value = Math.round(mg * 100);
+    $('micgainout').textContent = dbLabel(mg);
   }
+  if (document.activeElement !== $('spkvol')) {
+    $('spkvol').value = Math.round(sv * 100);
+    $('spkvolout').textContent = dbLabel(sv);
+  }
+
+  const el = $('audiostatus');
+  const local = (r) => r === 'soundcard' || r === 'bluetooth';
+  let txt, col = 'var(--green)';
+  if (spk === 'mute' && mic === 'mute') {
+    txt = 'muted: nothing is played, and silence is transmitted';
+    col = 'var(--dim)';
+  } else {
+    txt = 'speaker: ' + routeLabel(spk) + ' \u00b7 microphone: ' + routeLabel(mic);
+    if (local(spk) || local(mic)) {
+      if (!a.compiled) {
+        txt += ' - this build has no sound card support';
+        col = 'var(--red)';
+      } else {
+        if (a.device) txt += ' (' + a.device + ')';
+        if (s.spk_open || s.mic_open) {
+          const open = [];
+          if (s.spk_open) open.push('speaker open');
+          if (s.mic_open) open.push('mic open');
+          txt += ' - ' + open.join(', ');
+        } else {
+          txt += ' - attaching';
+          col = 'var(--amber)';
+        }
+        if (a.error) { txt += ' - ' + a.error; col = 'var(--red)'; }
+      }
+    }
+    if (spk === 'browser' || mic === 'browser') {
+      if (!audioReady) { txt += ' - browser audio not enabled yet'; col = 'var(--amber)'; }
+    }
+  }
+  if (s.audio_pending) txt += ' (applying\u2026)';
+  el.textContent = txt;
+  el.style.color = col;
+
+  if (!cfgOpen) setRoutes(spk, mic);
+  const en = $('audioenable');
+  if (en) en.disabled = audioReady;
 }
 
 // The sound card's own hardware controls.  The names come from the card, so the
@@ -251,12 +284,13 @@ function renderRecord(s) {
 let btSig = '';
 function renderBt(s) {
   const b = (s && s.bt) || {};
-  const st = $('btstatus');
-  const open = $('btopen');
+  const st = $('cfgbtstate');
+  const open = $('cfgbt');
   if (!st || !open) return;
   if (!b.available) {
     open.disabled = true;
-    st.textContent = b.why ? ('Bluetooth unavailable: ' + b.why) : 'Bluetooth unavailable';
+    st.textContent = 'Bluetooth ' + (b.why ? ('unavailable: ' + b.why) : 'unavailable') +
+      ' - use the sound card or the browser instead';
     st.style.color = 'var(--dim)';
     return;
   }
@@ -299,11 +333,11 @@ function renderBt(s) {
   const cardSpk = document.createElement('button');
   cardSpk.className = 'mini'; cardSpk.textContent = 'speaker';
   cardSpk.disabled = !o.mac;
-  cardSpk.onclick = () => cmd('bt spk off');
+  cardSpk.onclick = () => cmd('bt sel spk off');
   const cardMic = document.createElement('button');
   cardMic.className = 'mini'; cardMic.textContent = 'mic';
   cardMic.disabled = !i.mac;
-  cardMic.onclick = () => cmd('bt mic off');
+  cardMic.onclick = () => cmd('bt sel mic off');
   card.append(cardName, cardSpk, cardMic);
   box.append(card);
 
@@ -334,12 +368,12 @@ function renderBt(s) {
       spk.className = 'mini'; spk.textContent = 'speaker';
       spk.style.fontWeight = d.out ? '700' : '400';
       spk.style.outline = d.out ? '1px solid var(--green)' : 'none';
-      spk.onclick = () => cmd(d.out ? 'bt spk off' : 'bt spk ' + d.mac);
+      spk.onclick = () => cmd(d.out ? 'bt sel spk off' : 'bt sel spk ' + d.mac);
       const mic = document.createElement('button');
       mic.className = 'mini'; mic.textContent = 'mic';
       mic.style.fontWeight = d.in ? '700' : '400';
       mic.style.outline = d.in ? '1px solid var(--green)' : 'none';
-      mic.onclick = () => cmd(d.in ? 'bt mic off' : 'bt mic ' + d.mac);
+      mic.onclick = () => cmd(d.in ? 'bt sel mic off' : 'bt sel mic ' + d.mac);
       row.append(spk, mic);
     }
     box.append(row);
@@ -609,8 +643,13 @@ function addLog(kind, line) {
 function wire() {
   // PTT button + space bar
   const btn = $('pttbtn');
-  const down = (e) => { e.preventDefault(); if (!txHeld) { txHeld = true; btn.classList.add('live'); cmd('tx'); } };
-  const up = (e) => { if (txHeld) { txHeld = false; btn.classList.remove('live'); cmd('rx'); flushMic(); } };
+  const down = (e) => {
+    e.preventDefault();
+    if (!txHeld) { txHeld = true; btn.classList.add('live'); cmd('tx'); setSpkMute(); }
+  };
+  const up = (e) => {
+    if (txHeld) { txHeld = false; btn.classList.remove('live'); cmd('rx'); flushMic(); setSpkMute(); }
+  };
   btn.addEventListener('pointerdown', down);
   btn.addEventListener('pointerup', up);
   btn.addEventListener('pointerleave', up);
@@ -627,18 +666,70 @@ function wire() {
   // ...and if the page loses focus mid-transmission, unkey rather than leaving
   // the button latched.
   window.addEventListener('blur', () => {
-    if (txHeld) { txHeld = false; btn.classList.remove('live'); cmd('rx'); }
+    if (txHeld) { txHeld = false; btn.classList.remove('live'); cmd('rx'); setSpkMute(); }
   });
 
+  // ---- The audio configuration box --------------------------------------
+  const cfgDlg = $('audiodlg');
   const btDlg = $('btdlg');
+
+  $('audiocfg').onclick = () => {
+    cfgOpen = true;
+    setRoutes(st.spk_route || 'mute', st.mic_route || 'mute');
+    $('cfgstatus').textContent = '';
+    btSig = '';                    // rebuild the device list when it arrives
+    cmd('bt');                     // ask the station to refresh its cache
+    if (!cfgDlg.open) cfgDlg.showModal();
+  };
+  $('cfgclose').onclick = () => { cfgOpen = false; cfgDlg.close(); };
+  cfgDlg.addEventListener('close', () => { cfgOpen = false; });
+
+  $('cfgaudio').onclick = async () => {
+    const spk = radioValue('spkroute'), mic = radioValue('microute');
+    const note = $('cfgstatus');
+    note.style.color = 'var(--dim)';
+    if (!spk || !mic) {
+      note.textContent = 'choose one for the speaker and one for the microphone';
+      note.style.color = 'var(--amber)';
+      return;
+    }
+    // Apply first.  The station must end up configured even if this browser
+    // cannot open a microphone (no device, permission refused, or an audio
+    // context that never starts) - waiting on it would leave the request
+    // unsent, which looks exactly like Configure Audio doing nothing.
+    note.textContent = 'configuring\u2026';
+    cmd('audio apply spk ' + spk + ' mic ' + mic);
+    setTimeout(() => {
+      if (note.textContent.indexOf('configuring') === 0)
+        $('cfgstatus').textContent = 'sent - the station\'s answer is in the console';
+    }, 2000);
+
+    // A "browser" direction needs this page's own audio, and this click is the
+    // gesture browsers insist on before they will open a microphone.
+    if ((spk === 'browser' || mic === 'browser') && !audioReady) {
+      const ok = await Promise.race([startAudio(), sleep(6000).then(() => 'timeout')]);
+      if (ok === 'timeout') {
+        note.textContent = 'browser audio is taking too long - press "enable browser audio"';
+        note.style.color = 'var(--amber)';
+      } else if (!ok) {
+        note.textContent = 'browser audio could not start (see the console)';
+        note.style.color = 'var(--amber)';
+      }
+    }
+  };
+
+  $('cfgbt').onclick = () => {
+    cfgReopen = cfgDlg.open;
+    if (cfgDlg.open) cfgDlg.close();     // one modal at a time
+    btSig = '';
+    cmd('bt');
+    if (!btDlg.open) btDlg.showModal();
+  };
   if (btDlg) {
-    $('btopen').onclick = () => {
-      btSig = '';                 // rebuild the list when the answer arrives
-      cmd('bt');                  // ask the station to refresh its cache
-      if (!btDlg.open) btDlg.showModal();
-    };
     $('btclose').onclick = () => btDlg.close();
-    $('btoff').onclick = () => cmd('bt off');
+    btDlg.addEventListener('close', () => {
+      if (cfgReopen) { cfgReopen = false; cfgOpen = true; cfgDlg.showModal(); }
+    });
     $('btscan').onclick = () => {
       cmd('bt scan');
       $('btnote').textContent = 'scanning for 20 seconds...';
@@ -646,7 +737,9 @@ function wire() {
     };
   }
 
-  $('breakbtn').onclick = () => { txHeld = false; $('pttbtn').classList.remove('live'); cmd('b'); };
+  $('breakbtn').onclick = () => {
+    txHeld = false; $('pttbtn').classList.remove('live'); cmd('b'); setSpkMute();
+  };
   $('carrierbtn').onclick = () => cmd('tc');
   $('duplexbtn').onclick = () => cmd('td');
 
@@ -687,7 +780,10 @@ function wire() {
     b.onclick = () => cmd(b.dataset.cmd);
   });
 
-  $('audioselect').onchange = (e) => cmd('audio ' + e.target.value);
+  $('micgain').oninput = (e) => { $('micgainout').textContent = dbLabel(e.target.value / 100); };
+  $('micgain').onchange = (e) => cmd('micgain ' + e.target.value);
+  $('spkvol').oninput = (e) => { $('spkvolout').textContent = dbLabel(e.target.value / 100); };
+  $('spkvol').onchange = (e) => cmd('spkvol ' + e.target.value);
   $('csvtick').onchange = (e) => cmd('csv ' + (e.target.checked ? 'on' : 'off'));
   if ($('metatick'))
     $('metatick').onchange = (e) => cmd('gps meta ' + (e.target.checked ? 'on' : 'off'));
@@ -714,8 +810,6 @@ function wire() {
     cmd('lead ' + e.target.value);
   };
   $('audioenable').onclick = () => startAudio();
-  $('volume').oninput = (e) => { if (audio.outGain) audio.outGain.gain.value = e.target.value; };
-  $('mute').onchange = (e) => { if (audio.outGain) audio.outGain.gain.value = e.target.checked ? 0 : $('volume').value; };
 
   cmd('refs');
 }
@@ -784,11 +878,23 @@ class Upsampler {
 
 let down = null, up = null;
 
+// Half duplex: the page's own speaker is muted while transmitting, so the room
+// does not feed the microphone.  The station's volume control is separate and
+// lives on the Pi.
+function setSpkMute() {
+  if (audio.outGain) audio.outGain.gain.value = txHeld ? 0 : 1;
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
 async function startAudio() {
-  if (audioReady) { await audio.ctx.resume(); return; }
+  if (audioReady) { try { await audio.ctx.resume(); } catch (e) {} return true; }
   try {
     audio.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
-    await audio.ctx.resume();
+    // resume() never settles on a machine with no output device, so it must not
+    // be able to stall the set-up: the nodes below work while suspended, and a
+    // later gesture resumes the context.
+    await Promise.race([audio.ctx.resume().catch(() => {}), sleep(1500)]);
     const rate = audio.ctx.sampleRate;
     down = new Downsampler(rate, RATE);
     up = new Upsampler(RATE, rate);
@@ -798,7 +904,9 @@ async function startAudio() {
     });
     const src = audio.ctx.createMediaStreamSource(audio.stream);
     audio.outGain = audio.ctx.createGain();
-    audio.outGain.gain.value = $('mute').checked ? 0 : $('volume').value;
+    // Unity here by design: the received audio arrives already scaled by the
+    // station's speaker volume, which is the control the meters reflect.
+    audio.outGain.gain.value = txHeld ? 0 : 1;
     audio.outGain.connect(audio.ctx.destination);
 
     // microphone -> 8 kHz -> websocket
@@ -809,10 +917,6 @@ async function startAudio() {
       // The passthrough buffer must be silent: we never monitor ourselves
       for (let i = 0; i < ev.outputBuffer.numberOfChannels; i++)
         ev.outputBuffer.getChannelData(i).fill(0);
-      if ($('mute').checked) return;
-      let rms = 0;
-      for (let i = 0; i < s.length; i++) rms += s[i] * s[i];
-      audio.lastMicLevel = Math.min(1, Math.sqrt(rms / Math.max(1, s.length)) / 32768 * 3);
       // Send from the moment PTT is pressed: waiting for the state to say TX
       // costs a round trip, which left a gap at the start of every over.
       if (!txHeld || !ws || ws.readyState !== WebSocket.OPEN) return;
@@ -838,11 +942,19 @@ async function startAudio() {
 
     audioReady = true;
     $('audioenable').disabled = true;
-    $('audionote').textContent = `browser audio running at ${rate} Hz (device) / ${RATE} Hz (M17)`;
-    addLog('info', 'browser audio enabled');
+    $('audioerr').textContent = '';
+    // Name the device the browser actually opened: "far too loud at any trim"
+    // is usually the laptop's own array rather than the one that was expected.
+    const track = audio.stream.getAudioTracks ? audio.stream.getAudioTracks()[0] : null;
+    addLog('info', 'browser audio running: ' + (track ? track.label : 'microphone') +
+      ' at ' + rate + ' Hz, carried at ' + RATE + ' Hz');
+    return true;
   } catch (err) {
-    addLog('err', 'audio failed: ' + err.message +
-      ' (needs https or localhost, and microphone permission)');
+    const msg = 'browser audio failed: ' + err.message +
+      ' (needs https or localhost, and microphone permission)';
+    $('audioerr').textContent = msg;
+    addLog('err', msg);
+    return false;
   }
 }
 

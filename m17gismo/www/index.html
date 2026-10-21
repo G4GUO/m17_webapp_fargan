@@ -136,26 +136,28 @@
     </div>
 
     <div class="card">
-      <h2>Audio</h2>
-      <label>audio device
-        <select id="audioselect">
-          <option value="alsa">Raspberry Pi sound card (direct)</option>
-          <option value="browser">browser microphone / speaker</option>
-          <option value="pulse">Raspberry Pi sound card (PulseAudio)</option>
-          <option value="both">browser + Pi sound card</option>
-          <option value="none">mute (no audio)</option>
-        </select>
-      </label>
-      <p class="note" id="audiostatus">checking the Pi sound card&hellip;</p>
+      <h2>Audio <span class="badge" id="audiosummary">-</span></h2>
+      <div class="row">
+        <button id="audiocfg" class="wide">Audio configuration&hellip;</button>
+        <button id="audioenable" class="mini">enable browser audio</button>
+      </div>
+      <div class="vu">
+        <label class="meter"><span>mic</span><progress id="micbar" max="1" value="0"></progress></label>
+        <label class="meter"><span>spk</span><progress id="spkbar" max="1" value="0"></progress></label>
+      </div>
+      <div class="row">
+        <label class="slider">mic level <output id="micgainout">0.0 dB</output>
+          <input id="micgain" type="range" min="0" max="200" step="5" value="100" title="Microphone gain, applied on the Pi before the modulator. 100% = 0 dB, 200% = +6 dB."></label>
+        <label class="slider">volume <output id="spkvolout">-2.0 dB</output>
+          <input id="spkvol" type="range" min="0" max="100" step="5" value="80" title="Speaker volume, applied on the Pi to the audio it plays. 100% = 0 dB."></label>
+      </div>
+      <p class="note" id="audiostatus">checking the audio&hellip;</p>
+      <p class="note" id="audioerr"></p>
       <div class="row">
         <label class="lbl">blank frames before voice
           <input id="leadframes" type="number" min="0" max="50" step="2" value="4" style="width:5em">
         </label>
         <span class="lbl" id="txdrops">0 dropped samples</span>
-      </div>
-      <div class="row">
-        <button id="audioenable">enable browser audio</button>
-        <span class="lbl" id="audiopending"></span>
       </div>
       <div class="row">
         <label class="chk" title="Receive-only: FARGAN synthesis of the same Codec2 frames, at 16 kHz, on its own thread. Costs about half a Pi core.">
@@ -169,23 +171,6 @@
           record what is received</label>
         <span class="lbl" id="recstat"></span>
       </div>
-      <div class="row">
-        <button id="btopen">Bluetooth&hellip;</button>
-        <span class="lbl" id="btstatus">no Bluetooth device selected</span>
-      </div>
-      <div class="row">
-        <label class="meter"><span>mic</span><progress id="micbar" max="1" value="0"></progress></label>
-        <label class="meter"><span>spk</span><progress id="spkbar" max="1" value="0"></progress></label>
-      </div>
-      <div class="row">
-        <label>volume <input id="volume" type="range" min="0" max="1" step="0.05" value="0.8"></label>
-        <label class="chk"><input type="checkbox" id="mute"> mute</label>
-      </div>
-      <p class="note">
-        <b>Direct</b> talks to the card through ALSA (reliable on a Pi, no daemon);
-        <b>PulseAudio</b> goes through the daemon; <b>browser</b> needs a secure
-        context (<code>https://</code> or <code>localhost</code>) for its microphone.
-      </p>
     </div>
     <div class="card" id="mixercard">
       <h2>Mixer <span class="badge" id="mixerbadge">sound card</span></h2>
@@ -225,6 +210,34 @@
     </div>
   </section>
 </main>
+<dialog id="audiodlg">
+  <h2>Audio configuration</h2>
+  <p class="note">Choose where the speaker output goes and where the microphone comes from,
+     then press <b>Configure Audio</b>. Nothing changes until you do.</p>
+  <div class="cfgcols">
+    <fieldset class="cfgcol">
+      <legend>Speaker</legend>
+      <label class="chk"><input type="radio" name="spkroute" value="browser"> browser &mdash; this computer</label>
+      <label class="chk"><input type="radio" name="spkroute" value="soundcard"> soundcard &mdash; the Pi's card</label>
+      <label class="chk"><input type="radio" name="spkroute" value="bluetooth"> bluetooth &mdash; the chosen device</label>
+      <label class="chk"><input type="radio" name="spkroute" value="mute"> mute &mdash; no output</label>
+    </fieldset>
+    <fieldset class="cfgcol">
+      <legend>Microphone</legend>
+      <label class="chk"><input type="radio" name="microute" value="browser"> browser &mdash; this computer</label>
+      <label class="chk"><input type="radio" name="microute" value="soundcard"> soundcard &mdash; the Pi's card</label>
+      <label class="chk"><input type="radio" name="microute" value="bluetooth"> bluetooth &mdash; the chosen device</label>
+      <label class="chk"><input type="radio" name="microute" value="mute"> mute &mdash; silence</label>
+    </fieldset>
+  </div>
+  <p class="note" id="cfgbtstate">Bluetooth: looking&hellip;</p>
+  <p class="note" id="cfgstatus"></p>
+  <div class="row">
+    <button id="cfgbt">Configure Bluetooth</button>
+    <button id="cfgaudio">Configure Audio</button>
+    <button id="cfgclose" class="mini">close</button>
+  </div>
+</dialog>
 <dialog id="btdlg">
   <h2>Bluetooth audio</h2>
   <p class="note" id="btnote">Looking for devices&hellip;</p>
@@ -236,7 +249,6 @@
   </p>
   <div class="row">
     <button id="btscan" class="mini">scan for devices</button>
-    <button id="btoff" class="mini">use the sound card</button>
     <button id="btclose" class="mini">close</button>
   </div>
 </dialog>

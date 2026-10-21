@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <math.h>
 #include "m17defines.h"
 #include "audio.h"
 #include "bluetooth.h"
@@ -77,6 +78,22 @@ static void save_mode_to_config(const char *mode){
 	char line[64];
 	snprintf(line, sizeof(line), "mode %s", mode);
 	save_line_to_config("mode", line);
+}
+
+// Put the routes back in step with the Bluetooth selections: a direction that
+// has a device chosen moves to Bluetooth, one without goes back to the sound
+// card.  Per direction, so choosing a speaker does not disturb a microphone
+// that is working - and the choice is kept in config.txt as the route lines the
+// interface writes.
+static void bt_sync_routes(void){
+	AudioRoute out = bt_out_mac()[0] ? AROUTE_BT : AROUTE_CARD;
+	AudioRoute in  = bt_in_mac()[0]  ? AROUTE_BT : AROUTE_CARD;
+	audio_apply_routes(out, in);
+	char line[48];
+	snprintf(line, sizeof(line), "spk %s", audio_route_name(out));
+	save_line_to_config("spk", line);
+	snprintf(line, sizeof(line), "mic %s", audio_route_name(in));
+	save_line_to_config("mic", line);
 }
 
 void mmi_parse(char *cmd){
@@ -363,10 +380,167 @@ void mmi_parse(char *cmd){
 	// Audio routing: alsa (Pi sound card, direct), pulse (Pi sound card via
 	// PulseAudio), browser (web UI), file, both, none.
 	// "audio alsa plughw:3,0" also selects the ALSA device.
+	//
+	// The interface does not use any of those any more: it selects the speaker
+	// and the microphone separately, with "audio apply spk <route> mic <route>"
+	// (see below).
 	if(strncmp(token[0],"audio",5)==0){
-		if(nt == 2 || nt == 3){
+		if(nt == 1){
+			char line[160];
+			double mg = audio_get_mic_gain(), sv = audio_get_spk_vol();
+			snprintf(line, sizeof(line), "speaker %s, microphone %s",
+			         audio_route_name(audio_get_route(true)),
+			         audio_route_name(audio_get_route(false)));
+			gui_cmd_resp(line);
+			snprintf(line, sizeof(line), "mic gain %d%% (%+.1f dB), speaker volume %d%% (%+.1f dB)",
+			         (int)(mg * 100.0 + 0.5), 20.0 * log10(mg > 0.001 ? mg : 0.001),
+			         (int)(sv * 100.0 + 0.5), 20.0 * log10(sv > 0.001 ? sv : 0.001));
+			gui_cmd_resp(line);
+			snprintf(line, sizeof(line), "alsa %s%s%s", audio_local_device()[0] ? audio_local_device() : "(none)",
+			         audio_backend_error()[0] ? " - " : "", audio_backend_error());
+			gui_cmd_resp(line);
+			valid = true;
+		} else if(nt == 2 || nt == 3){
 			if(nt == 3) audio_alsa_set_device(token[2]);
 			audio_set_backend(audio_parse_backend(token[1]));
+			valid = true;
+		} else if(nt == 6 && strcmp(token[1], "apply") == 0 &&
+		          strcmp(token[2], "spk") == 0 && strcmp(token[4], "mic") == 0){
+			// The requested configuration, applied: detach what is open for a
+			// direction that changed, attach what was asked for.  A Bluetooth
+			// direction needs a device chosen and connected first, so that is
+			// done here rather than leaving the audio pointing at a PCM that
+			// does not exist yet.
+			AudioRoute want_out = audio_parse_route(token[3]);
+			AudioRoute want_in  = audio_parse_route(token[5]);
+			char line[200];
+			bool bad = false;
+
+			for(int d = 0; d < 2; d++){
+				AudioRoute r = d ? want_in : want_out;
+				if(r != AROUTE_BT) continue;
+				const char *mac = d ? bt_in_mac() : bt_out_mac();
+				const char *nm  = d ? bt_in_name() : bt_out_name();
+				if(mac[0] == 0){
+					snprintf(line, sizeof(line),
+					         "%s: no Bluetooth device chosen - use Configure Bluetooth first",
+					         d ? "microphone" : "speaker");
+					gui_cmd_resp(line);
+					bad = true;
+					continue;
+				}
+				if(!bt_available()){
+					gui_cmd_resp(bt_available_why());
+					bad = true;
+					continue;
+				}
+				if(!bt_connect_sync(mac, 12)){
+					snprintf(line, sizeof(line),
+					         "%s: %s did not answer - it will be attached when it does",
+					         d ? "microphone" : "speaker", nm[0] ? nm : mac);
+					gui_cmd_resp(line);
+				}
+			}
+			if(bad){
+				// Leave the direction that could not be configured where it is,
+				// rather than silently moving the audio somewhere it was not
+				// asked for.
+				if(want_out == AROUTE_BT && bt_out_mac()[0] == 0) want_out = audio_get_route(true);
+				if(want_in  == AROUTE_BT && bt_in_mac()[0]  == 0) want_in  = audio_get_route(false);
+			}
+
+			audio_apply_routes(want_out, want_in);
+
+			{
+				char l2[48];
+				snprintf(l2, sizeof(l2), "spk %s", audio_route_name(want_out));
+				save_line_to_config("spk", l2);
+				snprintf(l2, sizeof(l2), "mic %s", audio_route_name(want_in));
+				save_line_to_config("mic", l2);
+			}
+
+			{
+				char so[64], si[64];
+				if(want_out == AROUTE_BT && bt_out_name()[0])
+					snprintf(so, sizeof(so), "bluetooth (%s)", bt_out_name());
+				else
+					snprintf(so, sizeof(so), "%s", audio_route_name(want_out));
+				if(want_in == AROUTE_BT && bt_in_name()[0])
+					snprintf(si, sizeof(si), "bluetooth (%s)", bt_in_name());
+				else
+					snprintf(si, sizeof(si), "%s", audio_route_name(want_in));
+				snprintf(line, sizeof(line), "speaker: %s, microphone: %s", so, si);
+				gui_cmd_resp(line);
+			}
+			valid = true;
+		}
+	}
+
+	// The two routes, as config.txt records them ("spk bluetooth", "mic
+	// soundcard").  Written by the interface's Configure Audio and by the
+	// Bluetooth commands, so a restart comes back with the same arrangement.
+	// Exactly these two-word forms: nothing else begins "spk" or "mic".
+	if((strcmp(token[0], "spk") == 0 || strcmp(token[0], "mic") == 0) && nt == 2){
+		const char *n = token[1];
+		bool known = strcasecmp(n, "mute") == 0 || strcasecmp(n, "none") == 0 ||
+		             strcasecmp(n, "browser") == 0 || strcasecmp(n, "web") == 0 ||
+		             strcasecmp(n, "soundcard") == 0 || strcasecmp(n, "card") == 0 ||
+		             strcasecmp(n, "alsa") == 0 || strcasecmp(n, "bluetooth") == 0 ||
+		             strcasecmp(n, "bt") == 0 || strcasecmp(n, "pulse") == 0;
+		if(known){
+			bool out = (token[0][0] == 's');
+			audio_set_route(out, audio_parse_route(n));
+			valid = true;
+		}
+	}
+
+	// Microphone level and speaker volume: the two controls beside the meters.
+	// Percentages, and applied here on the Pi, between the microphone and the
+	// modulator / between the decoder and the speaker.
+	//
+	//   micgain PCT   0-200 (percent of unity: 100 = 0 dB, 200 = +6 dB)
+	//   spkvol PCT    0-100 (0 = silent, 100 = full scale)
+	if(strncmp(token[0],"micgain",7)==0){
+		if(nt == 1){
+			char line[120];
+			double g = audio_get_mic_gain();
+			snprintf(line, sizeof(line), "microphone gain %d%% (%+.1f dB)",
+			         (int)(g * 100.0 + 0.5), 20.0 * log10(g > 0.001 ? g : 0.001));
+			gui_cmd_resp(line);
+			valid = true;
+		} else if(nt == 2){
+			int pct = atoi(token[1]);
+			if(pct < 0) pct = 0;
+			if(pct > 200) pct = 200;
+			audio_set_mic_gain(pct / 100.0);
+			char line[64];
+			snprintf(line, sizeof(line), "micgain %d", pct);
+			save_line_to_config("micgain", line);
+			snprintf(line, sizeof(line), "microphone gain %d%% (%+.1f dB)", pct,
+			         20.0 * log10(pct / 100.0 > 0.001 ? pct / 100.0 : 0.001));
+			gui_cmd_resp(line);
+			valid = true;
+		}
+	}
+	if(strncmp(token[0],"spkvol",6)==0){
+		if(nt == 1){
+			char line[120];
+			double v = audio_get_spk_vol();
+			snprintf(line, sizeof(line), "speaker volume %d%% (%+.1f dB)",
+			         (int)(v * 100.0 + 0.5), 20.0 * log10(v > 0.001 ? v : 0.001));
+			gui_cmd_resp(line);
+			valid = true;
+		} else if(nt == 2){
+			int pct = atoi(token[1]);
+			if(pct < 0) pct = 0;
+			if(pct > 100) pct = 100;
+			audio_set_spk_vol(pct / 100.0);
+			char line[64];
+			snprintf(line, sizeof(line), "spkvol %d", pct);
+			save_line_to_config("spkvol", line);
+			snprintf(line, sizeof(line), "speaker volume %d%% (%+.1f dB)", pct,
+			         20.0 * log10(pct / 100.0 > 0.001 ? pct / 100.0 : 0.001));
+			gui_cmd_resp(line);
 			valid = true;
 		}
 	}
@@ -531,7 +705,6 @@ void mmi_parse(char *cmd){
 	//   btmic MAC             the config.txt form for the microphone
 	//   btdev MAC ROLE        the older config.txt form, still read
 	if(strncmp(token[0],"bt",2)==0){
-		char play[160], cap[160];
 		char line[160];
 
 		if(strncmp(token[0],"btspk",5)==0 || strncmp(token[0],"btmic",5)==0){
@@ -547,22 +720,15 @@ void mmi_parse(char *cmd){
 			} else if(!spk && nt == 2){
 				bt_set_input(token[1]);
 			}
-			bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
-			audio_alsa_set_device(play);
-			if(cap[0]) audio_alsa_set_capture_device(cap);
-			else       audio_alsa_capture_follow_card();
+			bt_sync_routes();
 			valid = true;
 		} else if(strncmp(token[0],"btdev",5)==0){
 			if(nt == 2 && strncmp(token[1],"off",3)==0){
 				bt_clear();
-				audio_alsa_set_device("");
-				audio_alsa_set_capture_device("");
+				bt_sync_routes();
 				valid = true;
 			} else if(nt == 3 && bt_set_active(token[1], token[2])){
-				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
-				audio_alsa_set_device(play);
-				if(cap[0]) audio_alsa_set_capture_device(cap);
-				else       audio_alsa_capture_follow_card();
+				bt_sync_routes();
 				valid = true;
 			}
 		} else if(nt == 1){
@@ -606,13 +772,48 @@ void mmi_parse(char *cmd){
 			valid = true;
 		} else if(nt == 2 && strncmp(token[1],"off",3)==0){
 			bt_clear();
-			audio_alsa_set_device("");
-			audio_alsa_set_capture_device("");
-			audio_set_backend(audio_parse_backend("alsa"));
+			bt_sync_routes();
 			save_line_to_config("btspk", "btspk off");
 			save_line_to_config("btmic", "btmic off");
 			gui_cmd_resp("speaker and microphone back on the sound card");
 			valid = true;
+		} else if(nt >= 4 && strncmp(token[1],"sel",3)==0 &&
+		          (strncmp(token[2],"spk",3)==0 || strncmp(token[2],"mic",3)==0)){
+			// "bt sel spk MAC" / "bt sel mic MAC": choose and connect a device
+			// WITHOUT moving the audio there.  This is what the interface's
+			// Configure Bluetooth does - picking a device and connecting it -
+			// leaving Configure Audio to attach it, so nothing changes under a
+			// half-filled request.
+			bool spk = (strncmp(token[2],"spk",3) == 0);
+			const char *mac = token[3];
+			if(strncmp(mac,"off",3) == 0){
+				if(spk){ bt_set_output(NULL, NULL); save_line_to_config("btspk", "btspk off"); }
+				else   { bt_set_input(NULL);        save_line_to_config("btmic", "btmic off"); }
+				gui_cmd_resp(spk ? "speaker device cleared (the routes are unchanged)"
+				                 : "microphone device cleared (the routes are unchanged)");
+				valid = true;
+			} else if(!bt_valid_mac(mac)){
+				gui_cmd_resp("not a Bluetooth address (xx:xx:xx:xx:xx:xx)");
+			} else if(!bt_available()){
+				gui_cmd_resp(bt_available_why());
+			} else {
+				const char *prof = (nt >= 5 && bt_valid_profile(token[4])) ? token[4] : "a2dp";
+				if(spk) bt_set_output(mac, prof);
+				else    bt_set_input(mac);
+				bool up = bt_connect_sync(mac, 12);
+				if(spk){
+					snprintf(line, sizeof(line), "btspk %s %s", mac, prof);
+					save_line_to_config("btspk", line);
+				} else {
+					snprintf(line, sizeof(line), "btmic %s", mac);
+					save_line_to_config("btmic", line);
+				}
+				snprintf(line, sizeof(line), "%s device chosen%s - Configure Audio attaches it",
+				         spk ? "speaker" : "microphone",
+				         up ? "" : ", not answering yet");
+				gui_cmd_resp(line);
+				valid = true;
+			}
 		} else if(nt == 3 && strncmp(token[1],"pair",4)==0){
 			// A device found by a scan is only discovered: nothing will connect
 			// it until it is paired, and a one-shot bluetoothctl registers no
@@ -638,10 +839,7 @@ void mmi_parse(char *cmd){
 			if(nt == 2 || (nt == 3 && strncmp(mac,"off",3) == 0)){
 				if(spk){ bt_set_output(NULL, NULL); save_line_to_config("btspk", "btspk off"); }
 				else    { bt_set_input(NULL);       save_line_to_config("btmic", "btmic off"); }
-				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
-				audio_alsa_set_device(play);
-				if(cap[0]) audio_alsa_set_capture_device(cap);
-				else       audio_alsa_capture_follow_card();
+				bt_sync_routes();
 				gui_cmd_resp(spk ? "speaker back on the sound card" : "microphone back on the sound card");
 				valid = true;
 			} else if(!bt_valid_mac(mac)){
@@ -653,11 +851,7 @@ void mmi_parse(char *cmd){
 				if(spk){ bt_set_output(mac, prof); }
 				else   { bt_set_input(mac); }
 				bool up = bt_connect_sync(mac, 12);
-				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
-				audio_alsa_set_device(play);
-				if(cap[0]) audio_alsa_set_capture_device(cap);
-				else       audio_alsa_capture_follow_card();
-				audio_set_backend(audio_parse_backend("alsa"));
+				bt_sync_routes();
 				bt_connect_async(mac);
 				if(spk){
 					snprintf(line, sizeof(line), "btspk %s %s", mac, prof);
@@ -686,11 +880,7 @@ void mmi_parse(char *cmd){
 				gui_cmd_resp("the role is speaker or headset");
 			} else {
 				bool up = bt_connect_sync(mac, 12);
-				bt_alsa_devices(play, sizeof(play), cap, sizeof(cap));
-				audio_alsa_set_device(play);
-				if(cap[0]) audio_alsa_set_capture_device(cap);
-				else       audio_alsa_capture_follow_card();
-				audio_set_backend(audio_parse_backend("alsa"));
+				bt_sync_routes();
 				bt_connect_async(mac);
 				if(!up) gui_cmd_resp("the device did not answer; the audio stays where it was");
 				if(strcmp(role,"speaker") == 0){

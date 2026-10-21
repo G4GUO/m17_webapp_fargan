@@ -28,12 +28,50 @@ typedef enum {
     AUDIO_BOTH
 } AudioBackend;
 
+// Where each direction's audio comes from / goes to, chosen separately.  This
+// is the model the web UI presents: the speaker and the microphone each have
+// one of these four, and "Configure Audio" attaches them.
+//
+// The older AudioBackend above still describes the pair as a whole, and is what
+// "-a alsa", "audio both" and the file back end still use; audio_set_backend()
+// maps it onto the two routes.
+typedef enum {
+    AROUTE_MUTE = 0,   // nothing: silence in, discarded out
+    AROUTE_BROWSER,    // the web page's WebAudio (over the WebSocket)
+    AROUTE_CARD,       // the Pi's sound card, direct through ALSA
+    AROUTE_BT,         // the Bluetooth device chosen in "Configure Bluetooth"
+    AROUTE_PULSE       // the Pi's sound card through PulseAudio (console only)
+} AudioRoute;
+
 // Selects the routing (call before audio_mic_open/audio_spk_open)
 bool           audio_set_backend(AudioBackend b);
 AudioBackend   audio_parse_backend(const char *name);
 const char    *audio_backend_name(AudioBackend b);
 AudioBackend   audio_get_backend(void);
 void           audio_backend_status(char *out, int len);   // human readable
+
+// ---- Per-direction routes ------------------------------------------------
+const char    *audio_route_name(AudioRoute r);          // "mute", "browser",
+                                                        // "soundcard", "bluetooth"
+AudioRoute     audio_parse_route(const char *name);     // accepts those, plus
+                                                        // card/alsa/bt/web/pulse
+AudioRoute     audio_get_route(bool out);               // false = microphone
+// Attach both directions.  Whatever is open for a direction that changed is
+// closed and reopened at the next safe moment - never in mid-transmission - and
+// a direction that did not change is left alone.
+void           audio_apply_routes(AudioRoute out, AudioRoute in);
+void           audio_set_route(bool out, AudioRoute r);
+// A short "soundcard / bluetooth" style summary for the interface's top bar.
+void           audio_route_summary(char *out, int len);
+// Mic gain and speaker volume, applied on the Pi: gain is applied to the
+// microphone audio after it is read and before the modulator sees it, and the
+// volume to received audio before it is written out.  The VU meters are
+// measured after both, so what they show is what the radio (or the speaker)
+// actually gets.
+void           audio_set_mic_gain(double g);            // 0..4, 1.0 = unity
+double         audio_get_mic_gain(void);
+void           audio_set_spk_vol(double v);             // 0..1
+double         audio_get_spk_vol(void);
 
 // Public API used by the M17 code (implemented by audio.cpp, the dispatcher)
 void audio_mic_open(void);
