@@ -87,7 +87,12 @@ function applyState(s) {
   // The station being received belongs here, not in the callsign box
   const fi = $('frameind');
   const rx = (s.rx_src || '').trim();
-  fi.textContent = s.in_frame ? (rx ? 'in frame: ' + rx : 'in frame') : 'no signal';
+  // In client mode there is no radio: what is heard came off the reflector, so
+  // say who it is rather than talking about frames.
+  const client = (s.mode || '').trim() === 'client';
+  fi.textContent = s.in_frame
+    ? (rx ? ((client ? 'hearing ' : 'in frame: ') + rx) : (client ? 'hearing' : 'in frame'))
+    : 'no signal';
   fi.className = 'badge' + (s.in_frame ? ' sig' : '');
 
   $('signalbar').value = s.signal || 0;

@@ -285,7 +285,9 @@ def build(path: str) -> None:
         ["PUSH TO TALK", "Bottom right. Press and hold while you speak, then release. You can hold the "
                          "space bar instead. A physical switch on the Pi does the same job."],
         ["RX / TX light", "Shows whether you are transmitting. Next to it, <b>in frame</b> means a valid "
-                          "M17 signal is being decoded, <b>no signal</b> means nothing is there."],
+                          "M17 signal is being decoded, <b>no signal</b> means nothing is there. In client "
+                          "mode - where there is no radio and the audio comes from a reflector - the same "
+                          "box names the station you are hearing, as <b>hearing G4ABC</b>."],
         ["signal and power bars", "The plain bars at the top of the PUSH TO TALK card: how strong the "
                                   "received signal is, and your transmit power setting. (The audio levels in "
                                   "the Audio card are the dials.)"],

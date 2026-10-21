@@ -5,6 +5,7 @@
 #include <string.h>
 #include <strings.h>
 #include <pthread.h>
+#include <time.h>
 
 #include "m17defines.h"
 
@@ -20,6 +21,16 @@ static char m_ip_add[30];
 static unsigned int m_port;
 static char m_mod;
 static uint16_t m_last_stream_id;
+// When a voice frame last arrived *from the reflector*.  In client mode that is
+// the only thing coming in - there is no radio - so it is what decides whether
+// the station is shown as hearing somebody.
+static uint32_t m_net_rx_ms;
+
+static uint32_t net_now_ms(void){
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (uint32_t)(t.tv_sec * 1000 + t.tv_nsec / 1000000);
+}
 
 int udp_send(uint8_t *b, int len );
 
@@ -193,6 +204,13 @@ int udp_tx_init( void )
     }
 	int reuse = 1;
 	setsockopt(m_sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int));
+	// A reflector with nobody talking sends nothing at all, so a blocking recv
+	// would never return and the "hearing ..." light would stay on for ever.
+	// 200 ms lets the loop notice the silence.
+	struct timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = 200000;
+	setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     return 0;
 }
@@ -222,6 +240,14 @@ void m17_parse_m17_data(uint8_t *b){
         // New PTT operation has occured
         m_last_stream_id = stream;
         if( m17_db_get_chan_type() == ASTODN ){
+        	// Who is talking: the link setup fields are in every reflector frame,
+        	// exactly as they are on the air, so the interface can show the
+        	// station being heard.  Without this client mode played the audio but
+        	// showed "no signal" over the PUSH TO TALK button.
+        	m17_db_set_rx_src( source );
+        	m17_db_set_rx_dst( destin );
+        	m_net_rx_ms = net_now_ms();
+        	if( m17_db_in_frame() == false ) m17_aos();
         	// Play audio on speakers
     		m17_txrx_spkr_audio( &pld[0] );
     		m17_txrx_spkr_audio( &pld[8]);
@@ -307,7 +333,18 @@ void *udp_thread( void *arg){
 	while(m_udp_running == true){
 		if((bp=buff_alloc())!= NULL){
 	        int m = udp_receive(bp,54);
-	        m17_net_parse_msg(bp, m);
+	        if(m > 0){
+	            m17_net_parse_msg(bp, m);
+	        }else{
+	            // Timeout (nobody is talking) or an error: the buffer has to go
+	            // back, or the pool runs dry, and then the silence is noticed.
+	            buff_rel(bp);
+	            if(m17_db_get_chan_type() == ASTODN && m17_db_in_frame() && m_net_rx_ms &&
+	               (net_now_ms() - m_net_rx_ms) > 1200){
+	                m_net_rx_ms = 0;
+	                m17_los();
+	            }
+	        }
 		}
 	}
 	return arg;
