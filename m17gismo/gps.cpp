@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <math.h>
 #include <pthread.h>
 #include <fcntl.h>
@@ -74,29 +75,120 @@ static int baud_constant(int baud) {
     }
 }
 
-static void resolve_device(char *out, size_t n) {
-    if (m_device[0]) { snprintf(out, n, "%s", m_device); return; }
-    const char *env = getenv("M17WEB_GPS");
-    if (env && env[0]) { snprintf(out, n, "%s", env); return; }
+// Case-insensitive substring test (avoid strcasestr/_GNU_SOURCE portability).
+static bool ci_has(const char *hay, const char *needle) {
+    if (!hay || !needle || !*needle) return false;
+    size_t nl = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nl && p[i] && tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) i++;
+        if (i == nl) return true;
+    }
+    return false;
+}
 
-    // By identity, so the port number does not matter.  The PlutoSDR also
-    // presents a serial port, which is exactly what we must not open.
+// Anything that is definitely not a GPS receiver.  The STM32 modem's VCP lives
+// on the same by-id tree, so this check is what stops us stealing it.
+static bool device_is_forbidden(const char *path) {
+    static const char *const bad[] = {
+        "stlink", "st-link", "stm32", "pluto", "adal", "analog devices",
+        "mass storage", "ttyama", "ttyacm0-pluto", NULL
+    };
+    for (int i = 0; bad[i]; i++) {
+        if (ci_has(path, bad[i])) return true;
+    }
+    return false;
+}
+
+// Build the candidate list in priority order.  Explicit configuration first
+// (operator knows best), then every by-id identity match.
+static int collect_candidates(char list[][160], int max) {
+    int n = 0;
+
+    const char *explicit_dev = m_device[0] ? m_device : getenv("M17WEB_GPS");
+    if (explicit_dev && explicit_dev[0] && n < max) {
+        snprintf(list[n++], 160, "%s", explicit_dev);
+    }
+
     static const char *const patterns[] = {
         "/dev/serial/by-id/*u-blox*",
+        "/dev/serial/by-id/*ublox*",
         "/dev/serial/by-id/*GPS*",
-        "/dev/serial/by-id/*GPS*GNSS*",
+        "/dev/serial/by-id/*GNSS*",
         NULL
     };
     for (int i = 0; patterns[i]; i++) {
         glob_t g;
-        if (glob(patterns[i], 0, NULL, &g) == 0 && g.gl_pathc > 0) {
-            snprintf(out, n, "%s", g.gl_pathv[0]);
-            globfree(&g);
-            return;
+        if (glob(patterns[i], 0, NULL, &g) == 0) {
+            for (size_t k = 0; k < g.gl_pathc && n < max; k++) {
+                const char *p = g.gl_pathv[k];
+                if (device_is_forbidden(p)) continue;
+                bool dup = false;
+                for (int j = 0; j < n; j++) {
+                    if (strcmp(list[j], p) == 0) { dup = true; break; }
+                }
+                if (!dup) snprintf(list[n++], 160, "%s", p);
+            }
         }
         globfree(&g);
     }
-    snprintf(out, n, "/dev/ttyACM0");
+    return n;
+}
+
+static int open_port(const char *dev);
+
+// A real GPS talks NMEA unprompted.  Anything silent for a couple of seconds is
+// not our receiver - including a modem VCP that accepted the open().
+static bool probe_nmea(int fd, int ms) {
+    uint32_t start = now_ms();
+    char buf[256];
+    int  dollars = 0;
+
+    while (now_ms() - start < (uint32_t)ms) {
+        ssize_t n = read(fd, buf, sizeof(buf));
+        if (n > 0) {
+            for (ssize_t i = 0; i < n; i++) {
+                if (buf[i] == '$') {
+                    if (++dollars >= 2) return true;
+                } else if (dollars && buf[i] >= 'A' && buf[i] <= 'Z') {
+                    return true;               // "$G", "$P" etc. - sentence start
+                }
+            }
+        } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            return false;
+        }
+    }
+    return false;
+}
+
+// Resolve *and* validate: returns an open fd, or -1 with errno set.
+static int open_gps(char *chosen, size_t chosen_len) {
+    char cand[8][160];
+    int n = collect_candidates(cand, 8);
+
+    if (chosen_len) chosen[0] = 0;
+    if (n <= 0) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (device_is_forbidden(cand[i])) continue;
+
+        int fd = open_port(cand[i]);
+        if (fd < 0) continue;
+
+        if (!probe_nmea(fd, 2500)) {
+            close(fd);
+            continue;
+        }
+
+        if (chosen_len) snprintf(chosen, chosen_len, "%s", cand[i]);
+        return fd;
+    }
+
+    errno = ENODEV;
+    return -1;
 }
 
 static int open_port(const char *dev) {
@@ -280,12 +372,12 @@ void *gps_thread(void *arg) {
     char line[512];
     int  used = 0;
     char dev[160];
+    uint32_t last_byte = 0;
 
     while (m_gps_running) {
-        resolve_device(dev, sizeof(dev));
-        m_fd = open_port(dev);
+        m_fd = open_gps(dev, sizeof(dev));
         if (m_fd < 0) {
-            snprintf(m_status, sizeof(m_status), "cannot open %s: %s", dev, strerror(errno));
+            snprintf(m_status, sizeof(m_status), "no GPS receiver found (%s), retrying", strerror(errno));
             // Try again: the receiver may not be plugged in yet.
             for (int i = 0; i < 20 && m_gps_running; i++) usleep(100000);
             continue;
@@ -294,15 +386,20 @@ void *gps_thread(void *arg) {
         printf("m17web: GPS on %s at %d baud\n", dev, m_baud);
 
         used = 0;
+        last_byte = now_ms();
         while (m_gps_running) {
             char buf[256];
             ssize_t n = read(m_fd, buf, sizeof(buf));
+            if (n > 0) last_byte = now_ms();
             if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
                 break;                                  // device went away
             }
             if (n == 0) {                               // read timeout
                 csv_tick();
+                // A live receiver emits a sentence every second.  Silence means we
+                // are on the wrong device (or it is wedged): drop it and re-resolve.
+                if (last_byte && (now_ms() - last_byte) > 30000U) break;
                 continue;
             }
             for (ssize_t i = 0; i < n; i++) {
