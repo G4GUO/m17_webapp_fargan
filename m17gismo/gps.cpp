@@ -184,6 +184,15 @@ static int open_gps(char *chosen, size_t chosen_len) {
         }
 
         if (chosen_len) snprintf(chosen, chosen_len, "%s", cand[i]);
+        // The probe above needs a non-blocking fd so it can give up at its own
+        // deadline.  The reader loop wants the opposite: with O_NONBLOCK set the
+        // kernel ignores VTIME, so read() returns EAGAIN the instant there is no
+        // byte and the loop spins - a whole core burnt between the receiver's
+        // 1 Hz sentences, which is exactly what it did on the Pi 5.  Clear it so
+        // each read sleeps in the kernel until a byte arrives, or until VTIME
+        // expires - and the loop already treats n == 0 as a read timeout.
+        int fl = fcntl(fd, F_GETFL, 0);
+        if (fl >= 0) fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
         return fd;
     }
 
@@ -392,7 +401,10 @@ void *gps_thread(void *arg) {
             ssize_t n = read(m_fd, buf, sizeof(buf));
             if (n > 0) last_byte = now_ms();
             if (n < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue;
+                // Second line of defence: if the fd is ever non-blocking again
+                // (or a read returns EAGAIN for another reason), yield instead of
+                // spinning on a whole core.
+                if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { usleep(2000); continue; }
                 break;                                  // device went away
             }
             if (n == 0) {                               // read timeout
