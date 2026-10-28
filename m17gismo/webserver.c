@@ -629,7 +629,11 @@ static void client_process(client *c) {
                 if (ws_handshake(c, key) < 0) { c->dead = 1; return; }
                 c->is_ws = 1;
                 c->rx_len = 0;
-                WsClientInfo ci; ci.id = c->id; snprintf(ci.peer, sizeof(ci.peer), "%s", c->peer);
+                WsClientInfo ci;
+                memset(&ci, 0, sizeof(ci));      // role is read as a string: never leave it unset
+                ci.id = c->id;
+                snprintf(ci.peer, sizeof(ci.peer), "%s", c->peer);
+                snprintf(ci.role, sizeof(ci.role), "%s", c->role);
                 if (g_srv.cfg.on_open) g_srv.cfg.on_open(&ci, g_srv.cfg.user);
                 return;
             }
