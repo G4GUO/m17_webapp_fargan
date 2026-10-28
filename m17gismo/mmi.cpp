@@ -483,8 +483,14 @@ void mmi_parse(char *cmd){
 	// Exactly these two-word forms: nothing else begins "spk" or "mic".
 	if((strcmp(token[0], "spk") == 0 || strcmp(token[0], "mic") == 0) && nt == 2){
 		const char *n = token[1];
+		// "phone"/"android" belong on this list as much as the rest: without them
+		// a "mic phone" line in config.txt was dropped without a word, so a
+		// station whose microphone had been set to the phone came back from every
+		// restart on the sound card - and transmitted a keyed carrier with
+		// nothing on it while the phone's audio was thrown away.
 		bool known = strcasecmp(n, "mute") == 0 || strcasecmp(n, "none") == 0 ||
 		             strcasecmp(n, "browser") == 0 || strcasecmp(n, "web") == 0 ||
+		             strcasecmp(n, "phone") == 0 || strcasecmp(n, "android") == 0 ||
 		             strcasecmp(n, "soundcard") == 0 || strcasecmp(n, "card") == 0 ||
 		             strcasecmp(n, "alsa") == 0 || strcasecmp(n, "bluetooth") == 0 ||
 		             strcasecmp(n, "bt") == 0 || strcasecmp(n, "pulse") == 0;

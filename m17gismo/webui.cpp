@@ -405,6 +405,11 @@ static void build_state(char *out, int len) {
                      m17_tx_hw_ptt() ? "true" : "false",
                      rpi_gpio_out_pin(), rpi_gpio_in_pin(), gerr);
     }
+    // What arrived from the client, separately from what the modulator got: the
+    // VU meter cannot tell "the phone is silent" from "the station is not using
+    // it", and these two numbers can.
+    o = json_add(out, len, o, ",\"mic_in\":{\"msgs\":%ld,\"peak\":%.3f,\"age_ms\":%ld}",
+                 audio_web_mic_messages(), audio_web_mic_peak(), audio_web_mic_age_ms());
     o = json_add(out, len, o, ",\"clients\":%d", m_srv ? ws_client_count(m_srv) : 0);
     o = json_add(out, len, o, ",\"phone_clients\":%d", m_srv ? ws_count_role(m_srv, "phone") : 0);
     o = json_add(out, len, o, ",\"refs\":%d", m_refs_count);

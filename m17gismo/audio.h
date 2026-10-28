@@ -202,6 +202,9 @@ void audio_web_mic_push(const int16_t *s, int len);   // from the WebSocket clie
 int  audio_web_mic_available(void);
 int  audio_web_input(int16_t *s, int len);            // returns samples delivered
 long audio_web_mic_starved(void);                     // samples padded with silence
+long audio_web_mic_messages(void);                    // messages received this over
+double audio_web_mic_peak(void);                      // loudest sample received, 0..1
+long audio_web_mic_age_ms(void);                      // since the last message, -1 = never
 void audio_web_mic_flush(void);                       // drop pre-transmission audio
 void audio_web_output(int16_t *s, int len);           // forwarded to the browser
 bool audio_web_active(void);

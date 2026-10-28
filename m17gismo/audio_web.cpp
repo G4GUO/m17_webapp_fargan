@@ -32,8 +32,18 @@ static bool m_spk_active;
 static bool m_preroll_done;              // this over has enough audio in hand
 static long m_over_start_ms;             // when this over's first block was asked for
 static long m_mic_frames;                // samples pushed by the browser
+static long m_mic_msgs;                  // messages (frames) pushed by the client
+static int  m_mic_peak;                  // largest |sample| since the over began
+static long m_mic_last_ms;
+static int  m_mic_logged_ignored;        // announce once when a route ignores audio
 static long m_spk_frames;                // samples sent to the browser
 static long m_mic_starved;               // samples the transmitter had to pad with silence
+
+static long mono_ms(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (long)(t.tv_sec * 1000L + t.tv_nsec / 1000000L);
+}
 
 // ---------------------------------------------------------------------------
 void audio_web_mic_open(void) {
@@ -80,9 +90,18 @@ void audio_web_mic_push(const int16_t *s, int len) {
     if (len <= 0) return;
     pthread_mutex_lock(&m_mtx);
     if (!m_mic_active) {
+        // The station is not listening to a network microphone at all: the
+        // route is the sound card, Bluetooth or mute.
+        if (!m_mic_logged_ignored) {
+            m_mic_logged_ignored = 1;
+            fprintf(stdout, "m17web: microphone audio from the client is being "
+                            "ignored (the microphone route is not browser/phone)\n");
+            fflush(stdout);
+        }
         pthread_mutex_unlock(&m_mtx);
         return;
     }
+    m_mic_logged_ignored = 0;
     for (int i = 0; i < len; i++) {
         if (m_count >= MIC_RING) {
             // Overrun: drop the oldest sample so we stay real time
@@ -94,6 +113,13 @@ void audio_web_mic_push(const int16_t *s, int len) {
         m_count++;
     }
     m_mic_frames += len;
+    m_mic_msgs++;
+    m_mic_last_ms = mono_ms();
+    for (int i = 0; i < len; i++) {
+        int v = s[i];
+        if (v < 0) v = -v;
+        if (v > m_mic_peak) m_mic_peak = v;
+    }
     pthread_cond_signal(&m_cv);
     pthread_mutex_unlock(&m_mtx);
 }
@@ -107,12 +133,6 @@ int audio_web_mic_available(void) {
 }
 
 // Blocks until len samples are available (or the timeout expires)
-static long mono_ms(void) {
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (long)(t.tv_sec * 1000L + t.tv_nsec / 1000000L);
-}
-
 // Never blocks.  The transmitter asks for a 20 ms block every 20 ms and cannot
 // afford to wait for the network: if the audio is not here yet the block is
 // silence, and the 125 ms of reserve taken at the start of the over is what
@@ -155,6 +175,33 @@ void audio_web_output(int16_t *s, int len) {
     if (active) webui_audio_to_browser(s, len);
 }
 
+// What arrived from the client this over: how many messages, how loud, how long
+// ago.  This is the number that separates "the phone is not sending" from "the
+// station is not using it" - the VU meter cannot.
+long audio_web_mic_messages(void) {
+    long n;
+    pthread_mutex_lock(&m_mtx);
+    n = m_mic_msgs;
+    pthread_mutex_unlock(&m_mtx);
+    return n;
+}
+
+double audio_web_mic_peak(void) {
+    int p;
+    pthread_mutex_lock(&m_mtx);
+    p = m_mic_peak;
+    pthread_mutex_unlock(&m_mtx);
+    return p / 32768.0;
+}
+
+long audio_web_mic_age_ms(void) {
+    long t;
+    pthread_mutex_lock(&m_mtx);
+    t = m_mic_last_ms;
+    pthread_mutex_unlock(&m_mtx);
+    return t == 0 ? -1 : mono_ms() - t;
+}
+
 long audio_web_mic_starved(void) {
     long n;
     pthread_mutex_lock(&m_mtx);
@@ -169,6 +216,8 @@ void audio_web_mic_flush(void) {
     pthread_mutex_lock(&m_mtx);
     m_head = m_tail = m_count = 0;
     m_mic_starved = 0;
+    m_mic_msgs = 0;
+    m_mic_peak = 0;
     m_preroll_done = false;
     m_over_start_ms = 0;
     pthread_mutex_unlock(&m_mtx);

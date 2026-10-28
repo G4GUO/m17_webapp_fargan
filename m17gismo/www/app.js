@@ -184,6 +184,23 @@ function renderAudio(s) {
     $('spkvolout').textContent = dbLabel(sv);
   }
 
+  // What the station is actually receiving from the network microphone.  The VU
+  // meter below shows the audio that reached the modulator, which cannot tell a
+  // silent client from a station that is ignoring it; this can.
+  const mi = s.mic_in || {};
+  const micin = $('micin');
+  if (micin) {
+    const msgs = mi.msgs || 0, peak = mi.peak || 0, age = (mi.age_ms === undefined) ? -1 : mi.age_ms;
+    if (msgs === 0 && age < 0) {
+      micin.textContent = 'phone mic: nothing received yet';
+    } else if (age >= 0 && age > 1500) {
+      micin.textContent = 'phone mic: silent for ' + Math.round(age / 1000) + ' s (no frames arriving)';
+    } else if (peak < 0.002) {
+      micin.textContent = 'phone mic: ' + msgs + ' frames, all silence - the phone is not capturing';
+    } else {
+      micin.textContent = 'phone mic: ' + msgs + ' frames, peak ' + peak.toFixed(2) + ' - arriving';
+    }
+  }
   const el = $('audiostatus');
   const local = (r) => r === 'soundcard' || r === 'bluetooth';
   let txt, col = 'var(--green)';
