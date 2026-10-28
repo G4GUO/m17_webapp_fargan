@@ -213,11 +213,14 @@
 <dialog id="audiodlg">
   <h2>Audio configuration</h2>
   <p class="note">Choose where the speaker output goes and where the microphone comes from,
-     then press <b>Configure Audio</b>. Nothing changes until you do.</p>
+     then press <b>Configure Audio</b>. Nothing changes until you do. <b>phone</b> is the M17
+     app: it keys the station itself, and with this page set to <b>phone</b> the page stays a
+     control surface instead of taking the audio.</p>
   <div class="cfgcols">
     <fieldset class="cfgcol">
       <legend>Speaker</legend>
       <label class="chk"><input type="radio" name="spkroute" value="browser"> browser &mdash; this computer</label>
+      <label class="chk"><input type="radio" name="spkroute" value="phone"> phone &mdash; the M17 app</label>
       <label class="chk"><input type="radio" name="spkroute" value="soundcard"> soundcard &mdash; the Pi's card</label>
       <label class="chk"><input type="radio" name="spkroute" value="bluetooth"> bluetooth &mdash; the chosen device</label>
       <label class="chk"><input type="radio" name="spkroute" value="mute"> mute &mdash; no output</label>
@@ -225,6 +228,7 @@
     <fieldset class="cfgcol">
       <legend>Microphone</legend>
       <label class="chk"><input type="radio" name="microute" value="browser"> browser &mdash; this computer</label>
+      <label class="chk"><input type="radio" name="microute" value="phone"> phone &mdash; the M17 app</label>
       <label class="chk"><input type="radio" name="microute" value="soundcard"> soundcard &mdash; the Pi's card</label>
       <label class="chk"><input type="radio" name="microute" value="bluetooth"> bluetooth &mdash; the chosen device</label>
       <label class="chk"><input type="radio" name="microute" value="mute"> mute &mdash; silence</label>

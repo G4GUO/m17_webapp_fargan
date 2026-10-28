@@ -127,6 +127,7 @@ typedef struct {
     int   fd;
     int   id;
     char  peer[64];
+    char  role[16];          // ?client=phone; "" for the page
     int   is_ws;
     int   dead;
     long  last_ms;
@@ -277,6 +278,34 @@ int ws_broadcast_bin(void *h, const uint8_t *data, int len) {
     return n;
 }
 
+int ws_broadcast_bin_role(void *h, const char *role, const uint8_t *data, int len) {
+    int n = 0;
+    if (!role) return ws_broadcast_bin(h, data, len);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        client *c = &g_srv.clients[i];
+        if (c->is_ws && !c->dead && c->fd >= 0 && strcmp(c->role, role) == 0)
+            if (ws_send_bin(h, i, data, len) == 0) n++;
+    }
+    return n;
+}
+
+const char *ws_client_role(void *h, int id) {
+    (void)h;
+    if (id < 0 || id >= MAX_CLIENTS) return "";
+    return g_srv.clients[id].role;
+}
+
+int ws_count_role(void *h, const char *role) {
+    (void)h;
+    int n = 0;
+    if (!role) return 0;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        client *c = &g_srv.clients[i];
+        if (c->is_ws && !c->dead && c->fd >= 0 && strcmp(c->role, role) == 0) n++;
+    }
+    return n;
+}
+
 int ws_client_count(void *h) {
     (void)h;
     int n = 0;
@@ -293,6 +322,7 @@ int ws_list_clients(void *h, WsClientInfo *out, int max) {
         if (c->is_ws && !c->dead && c->fd >= 0) {
             out[n].id = c->id;
             snprintf(out[n].peer, sizeof(out[n].peer), "%s", c->peer);
+            snprintf(out[n].role, sizeof(out[n].role), "%s", c->role);
             n++;
         }
     }
@@ -573,6 +603,29 @@ static void client_process(client *c) {
             }
 
             if (is_upgrade && key[0] && strcmp(method, "GET") == 0) {
+                // Which client is this?  The phone app asks for /ws?client=phone;
+                // anything else (the page) is the default role.
+                c->role[0] = 0;
+                {
+                    const char *q = strchr(path, '?');
+                    while (q) {
+                        q++;
+                        if (strncmp(q, "client=", 7) == 0) {
+                            int k = 0;
+                            q += 7;
+                            while (*q && *q != '&' && k < (int)sizeof(c->role) - 1) {
+                                char ch = *q++;
+                                if (ch == '%') break;          // no need for escapes here
+                                if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                                    (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')
+                                    c->role[k++] = (char)tolower((unsigned char)ch);
+                            }
+                            c->role[k] = 0;
+                            break;
+                        }
+                        q = strchr(q, '&');
+                    }
+                }
                 if (ws_handshake(c, key) < 0) { c->dead = 1; return; }
                 c->is_ws = 1;
                 c->rx_len = 0;

@@ -21,10 +21,16 @@ networking are upstream's.
   power meters, reflector selection, a live log and every console command — all
   on one page, sized to fit a screen.
 * **Audio where you want it.** The browser's own microphone and speaker, the
-  Pi's sound card, a Bluetooth speaker and headset, or silence — chosen
-  separately for the speaker and the microphone in one Audio configuration box,
-  with the gain and volume applied on the Pi so the meters show what is really
-  going out.
+  Pi's sound card, a Bluetooth speaker and headset, an Android phone, or silence
+  — chosen separately for the speaker and the microphone in one Audio
+  configuration box, with the gain and volume applied on the Pi so the meters
+  show what is really going out.
+* **From a phone.** The companion Android app (`/shared/AndroidStudio/M17`,
+  also on this repository's `tools/android_proto_check.py` side of the wire) is
+  a wireless speaker, microphone and PTT for the station: choose `phone` for
+  either direction and only that client gets the audio, so the page on the desk
+  stays a control surface.  The app finds the station by itself if the station
+  advertises `_m17web._tcp` — see `tools/avahi/m17web.service`.
 * **No hardware needed to try it.** The simulated radio runs the whole UI, the
   voice path and the logging on any Linux box.
 * **Optional extras:** the FARGAN neural receiver (16 kHz voice from the same

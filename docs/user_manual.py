@@ -378,6 +378,19 @@ def build(path: str) -> None:
     m.p("Releasing the switch returns you to receive. Releasing it does not cancel a transmission you "
         "started from the browser, so the two ways of transmitting do not fight each other.")
 
+    m.h2("Using the phone as the speaker and microphone")
+    m.p("The Android app connects to the station as a client, and with the <b>speaker</b> and "
+        "<b>microphone</b> both set to <b>phone</b> it becomes the station's audio: you hear the "
+        "radio in your ear and speak into the phone, and the PTT button on the phone keys the "
+        "transmitter. The page on the desk can stay open \u2014 it shows the meters, the log and "
+        "every setting, and it does <b>not</b> take the audio.")
+    m.p("Only a client that identifies itself as the phone gets the audio, so a page left open in "
+        "another room does not compete with it. If the phone loses the network in the middle of a "
+        "transmission the station releases the carrier by itself \u2014 immediately when the phone "
+        "disconnects, or after three seconds without its audio \u2014 and says so in the log. The "
+        "phone finds the station on the network by itself once the station advertises itself (see "
+        "\u201ctools/avahi\u201d in the source); until then, its address is set once with <b>FN</b>.")
+
     m.h1("7. Audio \u2014 where your voice comes from and goes")
     m.p("The <b>Audio</b> panel has one button that matters: <b>Audio configuration&hellip;</b>. It "
         "opens a box with two sets of choices \u2014 one for the <b>speaker</b> and one for the "
@@ -387,6 +400,11 @@ def build(path: str) -> None:
         ["browser",
          "The microphone and speakers of the computer you are browsing from, carried over the network.",
          "When you are away from the Pi, or it has no sound card."],
+        ["phone",
+         "The <b>M17 app</b> on an Android phone: its speaker and its microphone, over the same "
+         "network link. The phone also keys the station from its own PTT button.",
+         "A wireless microphone and speaker \u2014 the phone in your pocket while the page on the "
+         "desk stays a control surface."],
         ["soundcard",
          "The microphone and speaker plugged into the Pi's sound card, talked to directly.",
          "<b>Recommended</b> when a card is attached: the most reliable choice."],

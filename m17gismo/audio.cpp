@@ -27,6 +27,11 @@
 #include "bluetooth.h"
 
 static AudioRoute m_r_out = AROUTE_BROWSER;   // what was asked for
+
+// Both web routes carry audio over the WebSocket and differ only in which client
+// it goes to; every "is this the browser back end" test means both.
+static bool route_web(AudioRoute r) { return r == AROUTE_BROWSER || r == AROUTE_PHONE; }
+
 static AudioRoute m_r_in  = AROUTE_BROWSER;
 static AudioRoute m_open_out = AROUTE_MUTE;   // what is actually attached
 static AudioRoute m_open_in  = AROUTE_MUTE;
@@ -58,6 +63,7 @@ static double m_spk_vol  = 0.8;
 const char *audio_route_name(AudioRoute r) {
     switch (r) {
         case AROUTE_BROWSER: return "browser";
+        case AROUTE_PHONE:   return "phone";
         case AROUTE_CARD:    return "soundcard";
         case AROUTE_BT:      return "bluetooth";
         case AROUTE_PULSE:   return "pulse";
@@ -68,6 +74,8 @@ const char *audio_route_name(AudioRoute r) {
 AudioRoute audio_parse_route(const char *name) {
     if (!name || !name[0]) return AROUTE_MUTE;
     if (strcasecmp(name, "browser") == 0 || strcasecmp(name, "web") == 0)  return AROUTE_BROWSER;
+    if (strcasecmp(name, "phone") == 0 || strcasecmp(name, "app") == 0 ||
+        strcasecmp(name, "android") == 0)                                    return AROUTE_PHONE;
     if (strcasecmp(name, "soundcard") == 0 || strcasecmp(name, "card") == 0 ||
         strcasecmp(name, "alsa") == 0 || strcasecmp(name, "local") == 0)   return AROUTE_CARD;
     if (strcasecmp(name, "bluetooth") == 0 || strcasecmp(name, "bt") == 0)  return AROUTE_BT;
@@ -179,8 +187,8 @@ AudioBackend audio_get_backend(void) {
     AudioRoute o = m_r_out, i = m_r_in;
     if (o == AROUTE_PULSE || i == AROUTE_PULSE) return AUDIO_PULSE;
     if (o == AROUTE_MUTE && i == AROUTE_MUTE) return AUDIO_NONE;
-    if (o == AROUTE_BROWSER && i == AROUTE_BROWSER) return AUDIO_BROWSER;
-    if (o == AROUTE_CARD && i == AROUTE_BROWSER) return AUDIO_BOTH;
+    if (route_web(o) && route_web(i)) return AUDIO_BROWSER;
+    if (o == AROUTE_CARD && route_web(i)) return AUDIO_BOTH;
     return AUDIO_ALSA;      // card or Bluetooth: the ALSA back end carries it
 }
 
@@ -328,7 +336,7 @@ long audio_tx_dropped(void) {
 #ifdef HAVE_ALSA
     if (use_alsa_in()) n += audio_alsa_starved();
 #endif
-    if (m_r_in == AROUTE_BROWSER) n += audio_web_mic_starved();
+    if (route_web(m_r_in)) n += audio_web_mic_starved();
     return n;
 }
 
@@ -367,7 +375,8 @@ void audio_mic_open(void) {
     }
 
     switch (m_r_in) {
-        case AROUTE_BROWSER: audio_web_mic_open(); break;
+        case AROUTE_BROWSER:
+        case AROUTE_PHONE:   audio_web_mic_open(); break;
         case AROUTE_CARD:
         case AROUTE_BT:
 #ifdef HAVE_ALSA
@@ -421,7 +430,8 @@ void audio_spk_open(void) {
     }
 
     switch (m_r_out) {
-        case AROUTE_BROWSER: audio_web_spk_open(); break;
+        case AROUTE_BROWSER:
+        case AROUTE_PHONE:   audio_web_spk_open(); break;
         case AROUTE_CARD:
         case AROUTE_BT:
 #ifdef HAVE_ALSA
@@ -567,6 +577,7 @@ void audio_input(int16_t *s, int len) {
 
     switch (m_r_in) {
         case AROUTE_BROWSER:
+        case AROUTE_PHONE:
             audio_web_input(s, len);
             break;
         case AROUTE_CARD:
@@ -603,7 +614,8 @@ void audio_output(int16_t *s, int len) {
     if (m_file) { audio_file_output(s, len); return; }
 
     switch (m_r_out) {
-        case AROUTE_BROWSER: audio_web_output(s, len); break;
+        case AROUTE_BROWSER:
+        case AROUTE_PHONE:   audio_web_output(s, len); break;
         case AROUTE_CARD:
         case AROUTE_BT:
 #ifdef HAVE_ALSA

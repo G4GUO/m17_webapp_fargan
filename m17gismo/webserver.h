@@ -21,6 +21,7 @@ extern "C" {
 typedef struct {
     int   id;                     // client id (stable for the connection)
     char  peer[64];               // ip:port of the client
+    char  role[16];               // "phone" for /ws?client=phone, else ""
 } WsClientInfo;
 
 typedef void (*ws_open_cb)(const WsClientInfo *ci, void *user);
@@ -58,6 +59,11 @@ int ws_send_bin(void *handle, int client_id, const uint8_t *data, int len);
 // Broadcast helpers (drop data for slow clients rather than blocking)
 int ws_broadcast_text(void *handle, const char *text);
 int ws_broadcast_bin(void *handle, const uint8_t *data, int len);
+// Broadcast only to clients that identified themselves with ?client=<role>
+int ws_broadcast_bin_role(void *handle, const char *role, const uint8_t *data, int len);
+// The role a client gave, "" if none
+const char *ws_client_role(void *handle, int client_id);
+int ws_count_role(void *handle, const char *role);
 int ws_client_count(void *handle);
 // List currently connected clients, returns the number written
 int ws_list_clients(void *handle, WsClientInfo *out, int max);

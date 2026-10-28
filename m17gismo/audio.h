@@ -38,6 +38,10 @@ typedef enum {
 typedef enum {
     AROUTE_MUTE = 0,   // nothing: silence in, discarded out
     AROUTE_BROWSER,    // the web page's WebAudio (over the WebSocket)
+    AROUTE_PHONE,      // over the WebSocket, but only the phone app: a client
+                       // that connected with ?client=phone.  Lets the desk page
+                       // be the control surface while the phone is the mic and
+                       // the speaker.
     AROUTE_CARD,       // the Pi's sound card, direct through ALSA
     AROUTE_BT,         // the Bluetooth device chosen in "Configure Bluetooth"
     AROUTE_PULSE       // the Pi's sound card through PulseAudio (console only)

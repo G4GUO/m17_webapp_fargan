@@ -74,6 +74,14 @@ static int   m_log_count;      // total lines ever logged
 static pthread_mutex_t m_log_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static long  m_last_state_ms;
+
+// Which client asked for PTT.  A remote head is a network away from the radio:
+// if the phone loses Wi-Fi mid-over, nothing sends "rx" and the station would
+// hold the carrier - transmitting silence - until somebody noticed.  The client
+// that keyed it owns the keying, and silence from it releases it.
+static int   m_keyed_client = -1;
+static long  m_last_mic_ms;
+#define MIC_WATCHDOG_MS 3000
 static long  m_frames_seen;
 
 // ---------------------------------------------------------------------------
@@ -398,6 +406,7 @@ static void build_state(char *out, int len) {
                      rpi_gpio_out_pin(), rpi_gpio_in_pin(), gerr);
     }
     o = json_add(out, len, o, ",\"clients\":%d", m_srv ? ws_client_count(m_srv) : 0);
+    o = json_add(out, len, o, ",\"phone_clients\":%d", m_srv ? ws_count_role(m_srv, "phone") : 0);
     o = json_add(out, len, o, ",\"refs\":%d", m_refs_count);
     o = json_add(out, len, o, ",\"rx_stream\":%lu", (unsigned long)(db->n_frames - m_frames_seen));
     o = json_add(out, len, o, ",\"uptime\":%ld}", (long)(now_ms() / 1000));
@@ -479,9 +488,27 @@ static void send_hello(int id) {
     }
 }
 
+// Release the carrier and forget who asked for it.
+static void web_unkey(const char *why) {
+    m_keyed_client = -1;
+    m17_txrx_ptt_off();
+    gui_rx();
+    log_send("info", "unkeyed: %s", why);
+    push_state();
+}
+
+// Only a web route is driven by audio from a client.  With the sound card or a
+// Bluetooth device the network is not what keys the station, so this must stay
+// out of the way.
+static bool web_mic_from_client(void) {
+    AudioRoute r = audio_get_route(false);
+    return r == AROUTE_BROWSER || r == AROUTE_PHONE;
+}
+
 static void web_on_open(const WsClientInfo *ci, void *user) {
     (void)user;
-    log_send("info", "client connected: %s", ci->peer);
+    if (ci->role[0]) log_send("info", "client connected: %s (%s)", ci->peer, ci->role);
+    else             log_send("info", "client connected: %s", ci->peer);
     // Read the reflector list first: the greeting pushes the state, and that
     // should already report how many reflectors were found.  Waiting for the page
     // to ask for the list left the drop down empty whenever the answer arrived
@@ -492,6 +519,7 @@ static void web_on_open(const WsClientInfo *ci, void *user) {
 
 static void web_on_close(int id, void *user) {
     (void)user;
+    if (id == m_keyed_client) web_unkey("the client that keyed it disconnected");
     log_send("info", "client %d disconnected", id);
 }
 
@@ -599,11 +627,29 @@ static void send_refs(void) {
     ws_broadcast_text(m_srv, msg);
 }
 
+// Remember who keyed the station, so a client that vanishes can be released.
+static void web_note_ptt(const char *cmd, int id) {
+    while (*cmd && isspace((unsigned char)*cmd)) cmd++;
+    if (strncasecmp(cmd, "tx", 2) == 0 && (cmd[2] == 0 || isspace((unsigned char)cmd[2]))) {
+        m_keyed_client = id;
+        m_last_mic_ms = now_ms();
+    } else if (strcasecmp(cmd, "rx") == 0 || strcasecmp(cmd, "b") == 0 ||
+               strcasecmp(cmd, "break") == 0) {
+        m_keyed_client = -1;
+    }
+}
+
 static void web_on_msg(int id, int is_binary, const uint8_t *data, int len, void *user) {
-    (void)id; (void)user;
+    (void)user;
     if (is_binary) {
         if (len > 1 && data[0] == AUDIO_TAG_MIC) {
+            // The phone route takes the microphone from the phone and nowhere
+            // else; the browser route keeps taking it from any client, which is
+            // what it has always done.
+            const char *role = ws_client_role(m_srv, id);
+            if (audio_get_route(false) == AROUTE_PHONE && strcmp(role, "phone") != 0) return;
             int n = (len - 1) / 2;
+            m_last_mic_ms = now_ms();
             audio_web_mic_push((const int16_t *)(data + 1), n);
         }
         return;
@@ -611,18 +657,27 @@ static void web_on_msg(int id, int is_binary, const uint8_t *data, int len, void
     char cmd[256];
     const char *txt = (const char *)data;
     if (len > 0 && txt[0] == '{') {
-        if (extract_cmd(txt, cmd, sizeof(cmd)) == 0) run_command(cmd);
+        if (extract_cmd(txt, cmd, sizeof(cmd)) == 0) {
+            web_note_ptt(cmd, id);
+            run_command(cmd);
+        }
         return;
     }
     int n = len < (int)sizeof(cmd) - 1 ? len : (int)sizeof(cmd) - 1;
     memcpy(cmd, data, n);
     cmd[n] = 0;
+    web_note_ptt(cmd, id);
     run_command(cmd);
 }
 
 static void web_on_tick(void *user) {
     (void)user;
     if (!m_srv) return;
+    // A keyed station whose client has gone quiet is a stuck carrier: release it.
+    if (m_keyed_client >= 0 && m17_txrx_ptt_state() != 0 && !m17_tx_hw_ptt() &&
+        web_mic_from_client() && (now_ms() - m_last_mic_ms) > MIC_WATCHDOG_MS) {
+        web_unkey("no microphone audio from the client for 3 s");
+    }
     if (m_last_state_ms == 0 || (now_ms() - m_last_state_ms) >= 250) push_state();
 }
 
@@ -632,6 +687,9 @@ static void web_on_tick(void *user) {
 void webui_audio_to_browser(const int16_t *s, int len) {
     if (!m_srv || len <= 0) return;
     if (ws_client_count(m_srv) == 0) return;
+    // With the phone route the audio belongs to the phone alone, so a page open
+    // on the desk can be the control surface without also being the speaker.
+    const char *only = (audio_get_route(true) == AROUTE_PHONE) ? "phone" : NULL;
     static uint8_t buf[1 + 2048];
     int maxsamples = (int)(sizeof(buf) - 1) / 2;
     int off = 0;
@@ -640,7 +698,8 @@ void webui_audio_to_browser(const int16_t *s, int len) {
         if (chunk > maxsamples) chunk = maxsamples;
         buf[0] = AUDIO_TAG_SPK;
         memcpy(buf + 1, s + off, (size_t)chunk * 2);
-        ws_broadcast_bin(m_srv, buf, 1 + chunk * 2);
+        if (only) ws_broadcast_bin_role(m_srv, only, buf, 1 + chunk * 2);
+        else      ws_broadcast_bin(m_srv, buf, 1 + chunk * 2);
         off += chunk;
     }
 }

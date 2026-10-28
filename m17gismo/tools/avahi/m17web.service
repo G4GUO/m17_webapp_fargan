@@ -1,0 +1,22 @@
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Makes the station findable on the LAN, so the phone app does not need an
+  address typed into it.  The app looks for _m17web._tcp (Android's NsdManager);
+  the entry resolves to this machine's name and the port below.
+
+  Install on the station:
+      sudo cp tools/avahi/m17web.service /etc/avahi/services/
+      sudo systemctl reload avahi-daemon
+      avahi-browse -rt _m17web._tcp        # should print it
+
+  The port must match the one the station is started with (-w, default 8080).
+  Remove the file and reload to stop advertising.
+-->
+<service-group>
+  <name replace-wildcards="yes">m17web on %h</name>
+  <service>
+    <type>_m17web._tcp</type>
+    <port>8080</port>
+  </service>
+</service-group>

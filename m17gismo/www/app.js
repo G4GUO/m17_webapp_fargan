@@ -143,7 +143,9 @@ function dbLabel(g) {
 }
 
 function routeLabel(r) {
-  return r === 'soundcard' ? 'sound card' : r;
+  if (r === 'soundcard') return 'sound card';
+  if (r === 'phone') return 'phone';
+  return r;
 }
 
 // The configuration box's radios: they follow the station's own choice, except
