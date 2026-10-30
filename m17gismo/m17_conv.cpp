@@ -3,6 +3,7 @@
 //
 #include <stdio.h>
 #include <memory.h>
+#include <pthread.h>
 #include "m17defines.h"
 
 #define NR_CONVOLUTIONAL_STATES 16
@@ -145,7 +146,15 @@ void code_generate(void)
 /*
  * Need to look at conditioning the metrics so 0 is 0 and 1 is +1.0, unknown = 0.5
  */
+/* m_acm, m_path and m_hp are file static, so the decoder is not re-entrant.
+ * Two threads DO decode: the DSP receive thread, and the KISS/BPQ thread when
+ * the loopback or wire test is running.  Without this they share one metric
+ * array and one history pointer and corrupt each other's decode.
+ */
+static pthread_mutex_t m_conv_mtx = PTHREAD_MUTEX_INITIALIZER;
+
 int m17_viterbi_decode(float *in, uint8_t *out, int len){
+    pthread_mutex_lock(&m_conv_mtx);
     // Clear the accumulated metrics
 	memset(m_acm,0,sizeof(float)*NR_CONVOLUTIONAL_STATES);
     m_hp = 0;
@@ -163,8 +172,9 @@ int m17_viterbi_decode(float *in, uint8_t *out, int len){
 	{
    		state     = m_path[state][i];
 		out[i]    = state&0x08?1:0; // MSB of state
-	}
-	return bit_length;
+		}
+		pthread_mutex_unlock(&m_conv_mtx);
+		return bit_length;
 }
 void m17_init_conv(void){
 	m17_build_clut_table();

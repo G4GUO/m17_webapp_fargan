@@ -208,7 +208,18 @@ static long m_tx_push_errors;             // failed pushes: the radio went away
 long pluto_tx_push_errors(void) { return m_tx_push_errors; }
 
 void pluto_tx_flush(void) {
-	m_tx_acc_n = 0;
+	// Send what is left, padded with silence to a whole chunk, and let it go
+	// out.  Discarding it costs the tail of the last frame of every burst -
+	// harmless for a voice over that has already been heard, fatal for a
+	// packet, where the tail of the frame carries the CRC.
+	if (m_pluto_running == false || m_ctx == NULL || m_txbuf == NULL) { m_tx_acc_n = 0; return; }
+	if (m_tx_acc_n > 0) {
+		memset(&m_tx_acc[m_tx_acc_n], 0, sizeof(scmplx)*(size_t)(TX_CHUNK_SAMPLES - m_tx_acc_n));
+		memcpy(m_tx_buff_ptr, m_tx_acc, sizeof(scmplx)*TX_CHUNK_SAMPLES);
+		if (iio_buffer_push(m_txbuf) < 0)
+			m_tx_push_errors++;
+		m_tx_acc_n = 0;
+	}
 }
 
 void pluto_set_tx_buff_length(uint32_t len) {
@@ -396,15 +407,27 @@ void pluto_set_tx_level(double level) {
 	if (!get_phy_chan(m_ctx, TX, 0, &chn)) { return; }
 	wr_ch_lli(chn, "hardwaregain", (long long int)level);
 }
+/* The configured RX level is applied before the device is open at start-up,
+ * so remember it and re-apply once the stream is running. */
+static double m_rx_level = 40.0;
 void pluto_set_rx_level(double level) {
+	m_rx_level = level;
 	if (m_pluto_running == false) return;
 	if (m_ctx == NULL) return;
-//	if (level > 0) level = 0;
-//	if (level < -89) level = -89;
+	/* RX hardware gain is 0..73 dB, and the part boots in fast_attack AGC,
+	 * which pumps while a burst is still settling: fine for a long voice
+	 * over, fatal for a packet frame that has no forward error correction.
+	 * Manual gain holds still for the whole burst. */
+	if (level < 0) level = 0;
+	if (level > 73) level = 73;
 
 	struct iio_channel *chn = NULL;
 	if (!get_phy_chan(m_ctx, RX, 0, &chn)) { return; }
+	wr_ch_str(chn, "gain_control_mode", "manual");
 	wr_ch_lli(chn, "hardwaregain", (long long int)level);
+}
+void pluto_apply_rx_level(void){
+	pluto_set_rx_level(m_rx_level);
 }
 void pluto_set_tx_freq(long long int freq) {
 	if (m_pluto_running == false) return;

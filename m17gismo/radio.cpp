@@ -174,6 +174,7 @@ void radio_receive(void){
 	if( m_radio_type == RADIO_TYPE_PLUTO ){
 	    pluto_stop_tx_stream();
 	    pluto_start_rx_stream();
+	    pluto_apply_rx_level();
 	}
 #endif
 #ifdef HAVE_RPI_GPIO
@@ -191,6 +192,7 @@ void radio_duplex(void){
 #ifdef HAVE_PLUTO
 	if( m_radio_type == RADIO_TYPE_PLUTO ){
 	    pluto_start_rx_stream();
+	    pluto_apply_rx_level();
 	    pluto_start_tx_stream();
 	}
 #endif
@@ -269,10 +271,11 @@ void radio_set_rx_gain(float gain){
 #endif
 #ifdef HAVE_PLUTO
 	if( m_radio_type == RADIO_TYPE_PLUTO ){
-		gain = -(1.0 - gain)*89.0;
-		if( gain > 0 ) gain = 0;
-		if( gain < -89.0 ) gain = -89;
-	//	pluto_set_rx_level(gain);
+		/* RX gain is 0..73 dB of gain, not TX-style attenuation. */
+		gain = gain * 73.0;
+		if( gain < 0 ) gain = 0;
+		if( gain > 73 ) gain = 73;
+		pluto_set_rx_level(gain);
 	}
 #endif
 #ifdef HAVE_SIM
@@ -323,6 +326,20 @@ int radio_receive_samples( scmplx *s, uint32_t n){
 	}
 #endif
 	return nr;
+}
+/* Zero samples to the transmitter for a given number of milliseconds.  Used to
+ * start and finish a data burst at zero amplitude: the modulator is constant
+ * envelope, so keying straight into symbols and dropping the carrier straight
+ * after them is a step change at each end. */
+void radio_silence(int ms){
+	static scmplx quiet[15360];
+	int rate = 4800 * radio_get_oversample();
+	int left = (rate / 1000) * ms;
+	while( left > 0 ){
+		int n = (left > (int)(sizeof quiet / sizeof quiet[0])) ? (int)(sizeof quiet / sizeof quiet[0]) : left;
+		radio_transmit_samples( quiet, (uint32_t)n );
+		left -= n;
+	}
 }
 int radio_transmit_samples( scmplx *s, uint32_t n){
 	int nr = 0;

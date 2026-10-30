@@ -32,10 +32,47 @@ static float m_work[N_SAMPLES*2];
 // 0.5 = 50% (puncture value)
 // 0   = 0%
 //
+/* Soft decision mode.  0 = the original linear/threshold pair, 1 = max-log LLRs
+ * against the four symbol positions.  Runtime selectable so the two can be
+ * compared back to back on the same data (MMI: demap old|llr). */
+static int m_demap_llr = 0;
+
+void m17_demap_set_llr(int on) { m_demap_llr = on ? 1 : 0; }
+int  m17_demap_llr_mode(void)  { return m_demap_llr; }
+
 void m17_dsp_demap_symbol(float in, float mag, float *out){
 	// Normalise in relation to sync header
 	float m;
 	m = in*mag;
+
+	if(m_demap_llr){
+		/* The four 4FSK positions are collinear, so the cartesian distance is
+		 * one dimensional.  With the outer level normalised to 1:
+		 *   +1    -> bits 00      +1/3 -> bits 01
+		 *   -1/3  -> bits 10      -1   -> bits 11
+		 * LLR is the difference of the squared distances to the nearest symbol
+		 * of each hypothesis, which is positive for a one.  At m = 0 both
+		 * hypotheses are equidistant and the LLR is zero: noise carries no
+		 * information, instead of the old linear form which grew to 0.67 in
+		 * favour of a zero as the signal faded. */
+		/* Normalised symbol positions in dibit order, matching the modulator's
+		 * table {+pi/30, +pi/10, -pi/30, -pi/10}: dibit 0 is the inner positive
+		 * level and dibit 1 the outer one, not the other way round. */
+		const float lv[4] = {  0.3333f,  1.0f, -0.3333f, -1.0f };
+		float d[4];
+		float s = 0.5f;                      /* keep the metric in the old range */
+		for( int i = 0; i < 4; i++){
+			float e = m - lv[i];
+			d[i] = e*e;
+		}
+		float b0 = (d[0] < d[1]) ? d[0] : d[1];   /* nearest 0x */
+		float b1 = (d[2] < d[3]) ? d[2] : d[3];   /* nearest 1x */
+		out[0] = (b0 - b1) * s;
+		b0 = (d[0] < d[2]) ? d[0] : d[2];          /* nearest x0 */
+		b1 = (d[1] < d[3]) ? d[1] : d[3];          /* nearest x1 */
+		out[1] = (b0 - b1) * s;
+		return;
+	}
 
 	out[0] = -m;
 	out[1] = (fabs(m) - 0.6666);
@@ -151,9 +188,13 @@ void dsp_arctan_disc(short *in){
 	float u,v,re,im;
 	static float z;
 	for( int i = 0; i <  N_SAMPLES; i++){
-	    re  = (in[(i*2) ] *  0.003)+0.0001;// Prevent large outputs
-		im  =  in[(i*2)+1] * 0.003;
-		v   = atan(im/re);
+	    re  = (in[(i*2) ] *  0.003);
+	    im  =  in[(i*2)+1] * 0.003;
+	    /* atan(im/re) folds the phase into (-pi/2,+pi/2), so every sample with
+	     * a negative real part comes out with the wrong sign - the discriminator
+	     * cannot tell +180 degrees from -180.  atan2 is four quadrant and needs
+	     * no divide-by-zero guard. */
+	    v   = atan2(im, re);
 		u   = v - z;
 		z = v;
 		m_work[i] = m_work[i+N_SAMPLES];
@@ -174,7 +215,7 @@ int dsp_arctan_disc(fcmplx *in, float *out, int len){
 	float u,v;
 	int idx = 0;
 	for( int i = 0; i <  len; i++){
-		v   = atan(in[i].im/in[i].re);
+		v   = atan2(in[i].im, in[i].re);   /* four quadrant, see dsp_arctan_disc */
 		u   = v - z;
 		z   = v;
 		offset += u;

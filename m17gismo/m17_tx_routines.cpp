@@ -68,6 +68,9 @@ int build_lich( uint48_t dest, uint48_t src, M17Type type, uint8_t *meta){
 	m_lich[idx++] = (crc&0xFF);
     return idx;
 }
+/* The _net functions translate between M17 air frames and M17 over IP datagrams
+ * (reflector link).  See docs/m17-ip-framing.md for the byte layout and for the
+ * 54 vs 56 byte difference against the published IP specification. */
 void build_lich_to_net(uint48_t dest, uint48_t src, M17Type type, uint8_t *meta){
 	// Format a net frame, no sending
 	m_net[0] = 'M';
@@ -106,8 +109,16 @@ int build_lich_from_net( uint8_t *net){
 //
 // LSF_SYNC + LSF
 //
+#ifdef M17WEB_DIAG
+static uint8_t m_diag_coded[512];
+#endif
 int m17_fmt_add_link_setup_frame(uint8_t *dibits, uint48_t dest, uint48_t src, M17Type type, uint8_t *meta){
-	uint8_t tx_bit[2][388];
+	/* 240 data bits plus 4 flush encode to 488 bits, and the puncturer writes
+	 * 368 into the second row while still reading the tail of the first.  The
+	 * buffers used to be 388 bytes, so the coded stream overflowed into the row
+	 * the puncturer was writing - it destroyed its own input from index 388
+	 * onwards, which is the last six bytes of the frame: META and the CRC. */
+	uint8_t tx_bit[2][512];
 	int idx = 0;
 	int len = 0;
 
@@ -118,12 +129,53 @@ int m17_fmt_add_link_setup_frame(uint8_t *dibits, uint48_t dest, uint48_t src, M
 	len = build_lich( dest, src, type, meta );
 	// Apply the convolutional encoding
 	len = m17_conv_encode_8( m_lich, tx_bit[0], len);
+#ifdef M17WEB_DIAG
+	memcpy(m_diag_coded, tx_bit[0], 488);
+#endif
 	// Puncture the code
 	len = m17_punc_p1( tx_bit[0], tx_bit[1], len);
 	// Interleave
 	m17_interleave( tx_bit[1], tx_bit[0], len);
 	// de-correlate
 	m17_de_correlate_1( tx_bit[0], tx_bit[1], len);
+#ifdef M17WEB_DIAG
+	{	/* Hard-bit round trip of the LSF: bypasses the demapper entirely, so a
+		 * failure here is the coding chain and a success here with a failing
+		 * demodulated decode points at the soft values. */
+		static float fs[512], f2[512];
+		static uint8_t fb[512], fbytes[40];
+		int fi;
+		uint16_t fcrc;
+		for (fi = 0; fi < 368; fi++) fs[fi] = tx_bit[1][fi] ? 1.0f : -1.0f;
+		m17_de_correlate_1(fs, fs, 368);
+		m17_de_interleave(fs, f2, 368);
+		m17_de_punc_p1(f2, fs, 488);
+		{	/* Which stage loses the tail?  Compare the de-punctured stream with
+			 * the encoder's output at every position the pattern keeps. */
+			int mism = 0, kept = 0, first = -1, last = -1;
+			for (int k = 0; k < 488; k++) {
+				/* de_punc writes 0.0 for a punctured position */
+				if (fs[k] == 0.0f) continue;
+				kept++;
+				if ((fs[k] > 0) != (m_diag_coded[k] != 0)) {
+					mism++;
+					if (first < 0) first = k;
+					last = k;
+				}
+			}
+			printf("m17web: coded check kept=%d mismatched=%d first=%d last=%d\n",
+			       kept, mism, first, last);
+			fflush(stdout);
+		}
+		m17_viterbi_decode(fs, fb, 488);
+		pack_1_to_8(&fb[1], fbytes, 240);
+		fcrc = m17_crc_array_encode(fbytes, 30);
+		printf("m17web: hardbit lsf_crc=0x%04x ", fcrc);
+		for (fi = 0; fi < 30; fi++) printf("%02x", fbytes[fi]);
+		printf("\n");
+		fflush(stdout);
+	}
+#endif
 	// Pack the frame into Dibits
 	// Add the LSF_SYNC first
 	idx = pack_16_to_2(SYNC_LINK_SETUP, dibits);
@@ -217,7 +269,8 @@ int m17_fmt_add_stream_frame_fm_net(uint8_t *dibits, uint8_t *net ){
 
 int m17_fmt_add_packet(uint8_t *dibits, int len, bool eof, uint8_t nf, uint8_t *payload ){
 	uint8_t tmp[80];
-	uint8_t txb[2][388];
+	/* 206 bits plus 4 flush encode to 420 bits, which also overran 388. */
+	uint8_t txb[2][512];
 
 	if( len <= 25){
 		memset(tmp,0,25);
@@ -227,7 +280,19 @@ int m17_fmt_add_packet(uint8_t *dibits, int len, bool eof, uint8_t nf, uint8_t *
 	    else
 	    	tmp[25] = 0x00;
 	    tmp[25] |= (nf<<2);
-		m17_conv_encode_8(tmp, txb[0],26);
+		/* 206 type 1 bits: 200 of chunk plus 6 of metadata (EOF in bit 7 of
+		 * the metadata byte, counter in bits 6..2).  Encoding the whole 26th
+		 * byte would make 208 bits, and the four flush bits would then fall
+		 * outside the 420 that P3 keeps - leaving the decoder's trellis
+		 * unterminated and corrupting the metadata byte at the end of every
+		 * frame, which is where the EOF flag lives. */
+		uint8_t t1[206];
+		int k = 0;
+		for( int i = 0; i < 25; i++)
+			for( int b = 7; b >= 0; b--) t1[k++] = (tmp[i] >> b) & 1;
+		for( int b = 7; b >= 2; b--)    t1[k++] = (tmp[25] >> b) & 1;
+		/* 206 bits in; the encoder appends the four flush bits and gives 420. */
+		m17_conv_encode_1( t1, txb[0], 206);
 		m17_punc_p3( txb[0], txb[1], 420);
 		m17_interleave( txb[1], txb[0], 368);
 		m17_de_correlate_1( txb[0], txb[1], 368);

@@ -9,6 +9,20 @@
 
 #include "m17defines.h"
 
+/*
+ * M17 over IP - the reflector link.
+ *
+ * M17 has native IP framing, so a station can talk to a reflector over UDP with
+ * no hotspot or RF-to-IP bridge.  The datagram is the air frame wrapped in a
+ * magic header with a stream ID and a CRC over the whole packet:
+ *
+ *   0..3   "M17 "        4..5   stream ID      6..33  LSF contents (28 bytes)
+ *   34..35 frame number  36..51 payload (16B)  52..53 CRC16 over 0..51
+ *
+ * Note this is 54 bytes; the published IP specification describes 56, because
+ * its LICH field includes the LSF's own CRC16, which is not carried here.
+ * See docs/m17-ip-framing.md before changing any of the offsets.
+ */
 #define UDP_PORT 17000
 
 static uint8_t m_tx_buf[54];

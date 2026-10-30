@@ -76,6 +76,14 @@ void m17_mod_init(void){
 }
 
 
+void m17_mod_flush(void){
+	// Hand over any samples still short of a full internal block.  The last
+	// symbols of a burst otherwise sit in m_tx_samples and are never sent.
+	if( m_tx_idx > 0 ){
+		m17_mod_tx(m_tx_samples, m_tx_idx);
+		m_tx_idx = 0;
+	}
+}
 void m17_mod_dibits(uint8_t *dibits, int len){
     for( int i = 0; i < len; i++){
     	mod_filter(m_tx_lu[dibits[i]]);
