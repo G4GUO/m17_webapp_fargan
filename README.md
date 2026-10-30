@@ -17,6 +17,11 @@ networking are upstream's.
 
 ## What you get
 
+* **AX.25 packet over M17** (branch `feature/ax25-packet`). A KISS host — BPQ,
+  or `kissattach` through `kissnetd` — connects to TCP port 8001 and the station
+  transmits its frames as M17 packets, handing back whatever the receiver
+  decodes. Off unless `data on` is in `config.txt`; see
+  [docs/ax25.md](docs/ax25.md).
 * **A browser station.** Push-to-talk, RX/TX frequencies and gains, signal and
   power meters, reflector selection, a live log and every console command — all
   on one page, sized to fit a screen.

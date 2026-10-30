@@ -9,3 +9,7 @@ __pycache__/
 # build products and scratch (never published)
 m17web.pre-*
 build.log
+
+# editor backups
+*.bak
+*.bak-*
