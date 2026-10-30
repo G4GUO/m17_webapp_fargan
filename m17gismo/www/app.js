@@ -55,7 +55,7 @@ function handleJson(txt) {
     case 'state': applyState(m); break;
     case 'log': addLog(m.kind, m.line); break;
     case 'resp': addLog('resp', m.line); break;
-    case 'help': $('help').textContent = (m.lines || []).join('\n'); break;
+    case 'help': helpLines = m.lines || []; renderHelp(); break;
     case 'clear': $('log').innerHTML = ''; break;
     case 'refs': fillRefs(m.names); break;
     case 'hello':
@@ -81,19 +81,41 @@ function applyState(s) {
   $('clients').textContent = s.clients ?? 0;
 
   const led = $('pttled');
-  led.textContent = s.ptt || 'RX';
-  led.className = 'led' + (s.ptt === 'TX' ? ' tx' : s.ptt === 'DX' ? ' dx' : '');
+  // State the direction, not just the state: "TX" alone leaves you guessing
+  // whether a burst you can hear is yours or the other station's.
+  const txing = (s.ptt === 'TX');
+  const peer = (s.dst || '').trim();
+  const heard = (s.rx_src || '').trim();
+  led.textContent = txing
+    ? ('TX' + (peer ? ' \u2192 ' + peer : ''))
+    : (s.ptt === 'DX' ? 'DX' : 'RX');
+  led.className = 'led' + (txing ? ' tx' : s.ptt === 'DX' ? ' dx' : '');
 
-  // The station being received belongs here, not in the callsign box
+  // The station being received belongs here, not in the callsign box.  While
+  // this station is transmitting, say so instead of showing the last station
+  // heard: the old text made our own bursts look like someone else's.
   const fi = $('frameind');
-  const rx = (s.rx_src || '').trim();
+  const rx = heard;
   // In client mode there is no radio: what is heard came off the reflector, so
   // say who it is rather than talking about frames.
   const client = (s.mode || '').trim() === 'client';
-  fi.textContent = s.in_frame
-    ? (rx ? ((client ? 'hearing ' : 'in frame: ') + rx) : (client ? 'hearing' : 'in frame'))
-    : 'no signal';
-  fi.className = 'badge' + (s.in_frame ? ' sig' : '');
+  if (txing) {
+    fi.textContent = 'transmitting' + (peer ? ' to ' + peer : '');
+  } else if (s.in_frame) {
+    fi.textContent = rx
+      ? ((client ? 'hearing ' : 'receiving from ') + rx)
+      : (client ? 'hearing' : 'receiving');
+  } else if (s.act === 'TX' && s.act_age >= 0) {
+    // A burst is shorter than the state interval, so it is normally over before
+    // the page hears about it; say what just went out and how long ago.
+    fi.textContent = 'sent' + (peer ? ' to ' + peer : '') +
+                     ' (' + Math.round(s.act_age / 1000) + 's ago)';
+  } else if (s.act === 'RX' && s.act_age >= 0 && rx) {
+    fi.textContent = 'heard ' + rx + ' (' + Math.round(s.act_age / 1000) + 's ago)';
+  } else {
+    fi.textContent = 'no signal';
+  }
+  fi.className = 'badge' + ((txing || s.act === 'TX') ? ' tx' : s.in_frame ? ' sig' : '');
 
   $('signalbar').value = s.signal || 0;
   $('powerbar').value = s.power || 0;
@@ -811,8 +833,28 @@ function wire() {
   };
 
   document.querySelectorAll('button[data-cmd]').forEach((b) => {
-    b.onclick = () => cmd(b.dataset.cmd);
+    b.onclick = () => {
+      const c = b.dataset.cmd;
+      // Say what was sent.  Without this a button whose effect is already in
+      // place - broadcast when the destination is already broadcast, help when
+      // the help pane is already full - is indistinguishable from a dead one.
+      addLog('resp', '\u203a ' + c);
+      if (c === 'h') {
+        const box = $('helpsearch');
+        if (box) { box.value = ''; renderHelp(); }        // the button means "show me everything"
+        const help = $('help');
+        if (help) { help.scrollTop = 0; help.closest('.card').scrollIntoView({ block: 'nearest' }); }
+      }
+      if (c === 'ba') {
+        const d = $('dst');
+        if (d) { d.classList.remove('flash'); void d.offsetWidth; d.classList.add('flash');
+                 setTimeout(() => d.classList.remove('flash'), 800); }
+      }
+      cmd(c);
+    };
   });
+
+  if ($('helpsearch')) $('helpsearch').oninput = renderHelp;
 
   $('micgain').oninput = (e) => { $('micgainout').textContent = dbLabel(e.target.value / 100); };
   $('micgain').onchange = (e) => cmd('micgain ' + e.target.value);
@@ -1143,5 +1185,73 @@ function handleBinary(u8) {
 }
 
 // ---------------------------------------------------------------------------
+// Help search.  There are enough commands that reading the whole list to find
+// one is the slow way round, so the box narrows it to the likely lines: a
+// substring beats a scattered match, and "all" (or an empty box) shows the lot.
+let helpLines = [];
+
+function fuzzyScore(q, s) {
+  q = q.toLowerCase();
+  s = s.toLowerCase();
+  if (!q) return 1;
+  // A match at the start of a word is what the eye wants: help lines begin with
+  // the command, so "kiss" should find kisport and not the "k...i...s...s" that
+  // hides inside any long sentence.
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const word = new RegExp('(^|[^a-z0-9])' + esc).exec(s);
+  if (word) return 3000 - word.index;
+  const at = s.indexOf(q);
+  if (at >= 0) return 2000 - at;          // inside a word, still contiguous
+  // Scattered: fine only if the characters sit close together.  Counting gaps
+  // alone let any sentence match; density is what separates "rg" from "rubbish".
+  let i = 0, first = -1, last = -1;
+  for (let j = 0; j < s.length && i < q.length; j++) {
+    if (s[j] === q[i]) { if (first < 0) first = j; last = j; i++; }
+  }
+  if (i < q.length) return 0;
+  const density = q.length / (last - first + 1);
+  if (density < 0.5) return 0;            // too scattered to be what was meant
+  return Math.round(1000 * density) - first;
+}
+
+function renderHelp() {
+  const box = $('helpsearch'), pre = $('help'), count = $('helpcount');
+  if (!pre) return;
+  const q = (box ? box.value : '').trim();
+  if (!q || q.toLowerCase() === 'all') {
+    pre.textContent = helpLines.join('\n');
+    if (count) count.textContent = helpLines.length ? helpLines.length + ' lines' : '';
+    return;
+  }
+  const hits = helpLines
+    .map((l) => [fuzzyScore(q, l), l])
+    .filter((p) => p[0] > 0)
+    .sort((a, b) => b[0] - a[0]);
+  const shown = hits.slice(0, 25).map((p) => p[1]);
+  pre.textContent = shown.length
+    ? shown.join('\n')
+    : 'nothing matches "' + q + '" - clear the box or type all';
+  if (count) count.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es');
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics on or off.  The console card and the debugging counters are what
+// make the panel look busy, so they can be hidden outright; the choice is kept
+// in the browser and applied before the first frame arrives.
+function initDiagToggle() {
+  const box = $('diagtoggle');
+  if (!box) return;
+  const apply = (on) => {
+    document.body.classList.toggle('no-diag', !on);
+    box.checked = on;
+    try { localStorage.setItem('m17web.diag', on ? '1' : '0'); } catch (e) { /* storage blocked */ }
+  };
+  let saved = '1';
+  try { saved = localStorage.getItem('m17web.diag') || '1'; } catch (e) { /* storage blocked */ }
+  apply(saved !== '0');
+  box.addEventListener('change', () => apply(box.checked));
+}
+
 connect();
 wire();
+initDiagToggle();

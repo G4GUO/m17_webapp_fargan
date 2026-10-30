@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>m17web - M17 SDR</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>%F0%9F%93%A1</text></svg>">
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=8">
 </head>
 <body>
 <header>
@@ -18,6 +18,9 @@
   <div class="hdr-item"><span class="lbl">position</span><span id="hdrlatlon" class="val">no fix</span></div>
   <div class="hdr-item"><span class="lbl">gnss</span><span id="hdrgnss" class="val">none</span></div>
   <div id="link" class="link off">offline</div>
+  <label class="hdr-item diag" title="Show the console and the diagnostic counters">
+    <input type="checkbox" id="diagtoggle" checked><span class="lbl">diagnostics</span>
+  </label>
 </header>
 
 <div id="stale" class="stale" style="display:none">
@@ -43,17 +46,37 @@
     </div>
 
     <div class="card">
-      <h2>Mode</h2>
-      <div class="grid2">
-        <label class="chk"><input type="radio" name="mode" value="radio"> radio &mdash; normal</label>
-        <label class="chk"><input type="radio" name="mode" value="loop"> loopback &mdash; practice</label>
-        <label class="chk"><input type="radio" name="mode" value="gate"> gateway &mdash; radio to reflector</label>
-        <label class="chk"><input type="radio" name="mode" value="client"> client &mdash; audio to reflector</label>
+      <h2>Audio <span class="badge" id="audiosummary">-</span></h2>
+      <div class="row">
+        <button id="audiocfg" class="wide">Audio configuration&hellip;</button>
+        <button id="audioenable" class="mini">enable browser audio</button>
       </div>
-      <p class="note" id="modenote"></p>
-      <p class="note">Takes effect at once, and is kept for the next start.</p>
+      <div class="row">
+        <div class="vu">
+          <div class="dial" id="micdial" aria-label="microphone level"><span class="dialcap">mic</span></div>
+          <div class="dial" id="spkdial" aria-label="speaker level"><span class="dialcap">spk</span></div>
+        </div>
+        <div class="sliders">
+          <label class="slider">mic level <output id="micgainout">0.0 dB</output>
+            <input id="micgain" type="range" min="0" max="200" step="5" value="100" title="Microphone gain, applied on the Pi before the modulator. 100% = 0 dB, 200% = +6 dB."></label>
+          <label class="slider">volume <output id="spkvolout">-2.0 dB</output>
+            <input id="spkvol" type="range" min="0" max="100" step="5" value="80" title="Speaker volume, applied on the Pi to the audio it plays. 100% = 0 dB."></label>
+        </div>
+      </div>
+      <p class="note" id="audiostatus">checking the audio&hellip;</p>
+      <p class="note" id="micin"></p>
+      <p class="note" id="audioerr"></p>
+      <div class="row">
+        <label class="chk" title="Receive-only: FARGAN synthesis of the same Codec2 frames, at 16 kHz, on its own thread. Costs about half a Pi core.">
+          <input type="checkbox" id="fargan" onchange="cmd('fargan ' + (this.checked ? 'on' : 'off'))">
+          neural receiver (FARGAN)</label>
+        <label class="chk" title="Records what the receiver decodes, exactly as it is played, as a mono 8 kHz WAV in the working directory. Not remembered across restarts, and it stops itself after 30 minutes.">
+          <input type="checkbox" id="recbox" onchange="cmd('record ' + (this.checked ? 'on' : 'off'))">
+          record</label>
+        <span class="lbl" id="farganstat"></span>
+        <span class="lbl" id="recstat"></span>
+      </div>
     </div>
-
     <div class="card">
       <h2>Radio</h2>
       <div class="grid2">
@@ -136,41 +159,40 @@
     </div>
 
     <div class="card">
-      <h2>Audio <span class="badge" id="audiosummary">-</span></h2>
-      <div class="row">
-        <button id="audiocfg" class="wide">Audio configuration&hellip;</button>
-        <button id="audioenable" class="mini">enable browser audio</button>
+      <h2>Mode</h2>
+      <div class="grid2">
+        <label class="chk"><input type="radio" name="mode" value="radio"> radio &mdash; normal</label>
+        <label class="chk"><input type="radio" name="mode" value="loop"> loopback &mdash; practice</label>
+        <label class="chk"><input type="radio" name="mode" value="gate"> gateway &mdash; radio to reflector</label>
+        <label class="chk"><input type="radio" name="mode" value="client"> client &mdash; audio to reflector</label>
       </div>
-      <div class="row">
-        <div class="vu">
-          <div class="dial" id="micdial" aria-label="microphone level"><span class="dialcap">mic</span></div>
-          <div class="dial" id="spkdial" aria-label="speaker level"><span class="dialcap">spk</span></div>
-        </div>
-        <div class="sliders">
-          <label class="slider">mic level <output id="micgainout">0.0 dB</output>
-            <input id="micgain" type="range" min="0" max="200" step="5" value="100" title="Microphone gain, applied on the Pi before the modulator. 100% = 0 dB, 200% = +6 dB."></label>
-          <label class="slider">volume <output id="spkvolout">-2.0 dB</output>
-            <input id="spkvol" type="range" min="0" max="100" step="5" value="80" title="Speaker volume, applied on the Pi to the audio it plays. 100% = 0 dB."></label>
-        </div>
-      </div>
-      <p class="note" id="audiostatus">checking the audio&hellip;</p>
-      <p class="note" id="micin"></p>
-      <p class="note" id="audioerr"></p>
-      <div class="row">
-        <label class="chk" title="Receive-only: FARGAN synthesis of the same Codec2 frames, at 16 kHz, on its own thread. Costs about half a Pi core.">
-          <input type="checkbox" id="fargan" onchange="cmd('fargan ' + (this.checked ? 'on' : 'off'))">
-          neural receiver (FARGAN)</label>
-        <label class="chk" title="Records what the receiver decodes, exactly as it is played, as a mono 8 kHz WAV in the working directory. Not remembered across restarts, and it stops itself after 30 minutes.">
-          <input type="checkbox" id="recbox" onchange="cmd('record ' + (this.checked ? 'on' : 'off'))">
-          record</label>
-        <span class="lbl" id="farganstat"></span>
-        <span class="lbl" id="recstat"></span>
-      </div>
+      <p class="note" id="modenote"></p>
+      <p class="note">Takes effect at once, and is kept for the next start.</p>
     </div>
+
     <div class="card" id="mixercard">
       <h2>Mixer <span class="badge" id="mixerbadge">sound card</span></h2>
       <div id="mixerctls"></div>
       <p class="note" id="mixernote">The card's own controls.</p>
+    </div>
+  </section>
+
+  <section class="col wide">
+    <div class="card log-card">
+      <h2>Console <span class="lbl" id="logcount"></span></h2>
+      <div id="log" class="log"></div>
+      <form id="cmdform" autocomplete="off">
+        <span class="prompt">&gt;&gt;</span>
+        <input id="cmdinput" placeholder="type a command">
+        <button type="submit">send</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Command help <span class="lbl" id="helpcount"></span></h2>
+      <div class="row">
+        <input id="helpsearch" placeholder="search help - blank or 'all' shows everything">
+      </div>
+      <pre id="help" class="help"></pre>
     </div>
     <div class="card ptt">
       <div class="row meters">
@@ -192,22 +214,6 @@
         </label>
         <span class="lbl" id="txdrops">0 dropped samples</span>
       </div>
-    </div>
-  </section>
-
-  <section class="col wide">
-    <div class="card log-card">
-      <h2>Console <span class="lbl" id="logcount"></span></h2>
-      <div id="log" class="log"></div>
-      <form id="cmdform" autocomplete="off">
-        <span class="prompt">&gt;&gt;</span>
-        <input id="cmdinput" placeholder="type a command (h for help)">
-        <button type="submit">send</button>
-      </form>
-    </div>
-    <div class="card">
-      <h2>Command help</h2>
-      <pre id="help" class="help"></pre>
     </div>
   </section>
 </main>
@@ -258,6 +264,6 @@
     <button id="btclose" class="mini">close</button>
   </div>
 </dialog>
-<script src="/app.js"></script>
+<script src="/app.js?v=8"></script>
 </body>
 </html>

@@ -25,6 +25,34 @@ header h1 { font-size: 1.15rem; margin: 0; letter-spacing: .06em; color: var(--a
 .hdr-item { display: flex; gap: .4rem; align-items: baseline; }
 .hdr-item .lbl { color: var(--dim); font-size: .75rem; text-transform: uppercase; }
 .hdr-item .val { font-weight: 600; }
+.hdr-item.diag { align-items: center; cursor: pointer; user-select: none; }
+.hdr-item.diag input { margin: 0; }
+/* Help search box: part of the help card, sized to the card not the page */
+#helpsearch { width: 100%; font-size: .78rem; padding: .2rem .4rem; }
+
+/* A control whose effect is only visible elsewhere gets a brief highlight, so a
+   button press is never silent. */
+input.flash { animation: flash .8s ease-out; }
+@keyframes flash {
+  0%   { border-color: var(--accent); background: rgba(90,160,255,.25); }
+  100% { border-color: var(--line); background: var(--panel2); }
+}
+
+/* Diagnostics off: a clean panel.  The console card and the counters that only
+   matter while debugging are hidden; nothing that shows what the station is
+   doing (PTT lamp, frame direction, meters) is affected. */
+body.no-diag .log-card,
+body.no-diag #hwinfo,
+body.no-diag #txdrops { display: none; }
+/* The audio box writes its own status lines and colours them green, amber or red
+   from the state, which is useful when the audio is not behaving and noise the
+   rest of the time.  The same switch hides them; the routing itself stays
+   visible in the Audio heading badge. */
+body.no-diag #audiostatus,
+body.no-diag #micin,
+body.no-diag #audioerr,
+body.no-diag #farganstat,
+body.no-diag #recstat { display: none; }
 .link { margin-left: auto; padding: .15rem .6rem; border-radius: 1rem; font-size: .8rem; font-weight: 600; }
 .stale {
   background: rgba(255,176,32,.15); color: var(--amber); border-bottom: 1px solid rgba(255,176,32,.45);
@@ -71,12 +99,13 @@ button.mini { font-size: .76rem; padding: .18rem .45rem; }
 .radio-stack input[type=range] { max-width: 11rem; }
 .radio-stack label { max-width: 20rem; }
 
-/* Push to talk: the last card of the grid, in the right hand column, so it sits
-   at the bottom right of the panel area and lines up with the cards above it. */
-.ptt { grid-column: 2; display: flex; flex-direction: column; gap: .4rem; }
+/* Push to talk: last card of the console column.  It used to sit in the second
+   column of the left panel grid, and a leftover `grid-column: 2` here made the
+   single column console section invent a second implicit column - which squeezed
+   the console card to 45px and pushed it under the help box. */
+.ptt { display: flex; flex-direction: column; gap: .4rem; }
 /* The meters sit at the top of the card: they are what you glance at */
 .ptt .row.meters { margin-top: 0; }
-@media (max-width: 760px) { .ptt { grid-column: auto; } }
 .pttstate { display: flex; align-items: center; gap: .6rem; }
 .led {
   font-weight: 800; letter-spacing: .1em; padding: .25rem .8rem; border-radius: .35rem;
@@ -87,6 +116,9 @@ button.mini { font-size: .76rem; padding: .18rem .45rem; }
 .badge { font-size: .75rem; color: var(--dim); border: 1px solid var(--line); border-radius: 1rem; padding: .1rem .6rem; }
 .badge.ok { color: var(--green); border-color: rgba(62,207,142,.45); }
 .badge.sig { color: var(--amber); border-color: rgba(255,176,32,.45); }
+/* Red while this station is on air, so our own bursts cannot be mistaken for
+   someone else's. */
+.badge.tx { color: var(--red); border-color: rgba(255,92,92,.5); background: rgba(255,92,92,.12); }
 
 .ptt-button {
   padding: .5rem; font-size: 1.05rem; font-weight: 700; letter-spacing: .04em;

@@ -14,6 +14,11 @@
 #ifndef UI_H
 #define UI_H
 
+/* Push a line to the operator log the interface shows (the browser console or
+ * the ncurses log pane).  printf() only reaches the journal, which is no use to
+ * someone watching the station. */
+void gui_log_event(const char *kind, const char *fmt, ...);
+
 #include <stdbool.h>
 #include <stdint.h>
 

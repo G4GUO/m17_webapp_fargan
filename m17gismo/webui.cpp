@@ -59,6 +59,14 @@ static void *m_srv;
 static int   m_srv_ok;
 
 static char  m_ptt[4]   = "RX";
+
+/* Last activity, latched.  State is pushed about once a second and an AX.25
+ * burst is 200 ms, so a live flag would usually be sampled between bursts and
+ * the operator could not tell whether a burst they heard was theirs.  Remember
+ * the direction and when it happened, and let the interface show it for a few
+ * seconds afterwards. */
+static char      m_act[4];
+static long long m_act_ms;
 static char  m_mode[16] = "gate";
 static char  m_src[16]  = "        ";
 static char  m_dst[16]  = "        ";
@@ -127,6 +135,16 @@ static void log_send(const char *kind, const char *fmt, ...) {
     json_escape(line, esc, sizeof(esc));
     snprintf(msg, sizeof(msg), "{\"t\":\"log\",\"kind\":\"%s\",\"line\":\"%s\"}", kind, esc);
     ws_broadcast_text(m_srv, msg);
+}
+
+/* Public wrapper so the protocol code can write to the operator log. */
+void gui_log_event(const char *kind, const char *fmt, ...) {
+    char line[LOG_LEN];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    log_send(kind ? kind : "info", "%s", line);
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +220,18 @@ static void build_state(char *out, int len) {
         case 3:  ptt_now = "CA"; break;
         default: ptt_now = "RX"; break;
     }
-    o = json_add(out, len, o, ",\"mode\":\"%s\",\"ptt\":\"%s\"", mode, ptt_now);
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        long long now = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+        int in_frame_now = (m_in_frame || db->in_frame) ? 1 : 0;
+        if (ptt_now[0] == 'T') { snprintf(m_act, sizeof m_act, "TX"); m_act_ms = now; }
+        else if (in_frame_now) { snprintf(m_act, sizeof m_act, "RX"); m_act_ms = now; }
+        long long age = now - m_act_ms;
+        if (age > 6000 || !m_act[0]) { m_act[0] = 0; age = -1; }
+        o = json_add(out, len, o, ",\"mode\":\"%s\",\"ptt\":\"%s\",\"act\":\"%s\",\"act_age\":%lld",
+                     mode, ptt_now, m_act, age);
+    }
     {
         // "src" is what THIS station transmits with, and must not change when a
         // station is received: gui_save_src_address() is called by the receive

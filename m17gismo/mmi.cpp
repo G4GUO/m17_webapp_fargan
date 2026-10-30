@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "m17defines.h"
+#include "m17_ax25.h"
 #include "audio.h"
 #include "bluetooth.h"
 #include "fargan.h"
@@ -122,6 +123,110 @@ void mmi_parse(char *cmd){
 		valid = true;;
 	}
 
+	// AX.25 over M17 packet mode.  A KISS host (BPQ, Direwolf, kissattach
+	// through kissnetd) connects to the TCP port, hands us AX.25 frames to
+	// transmit, and hears back whatever the receiver decodes.  Off by
+	// default: with packet mode off the port is not even opened and the
+	// voice path is untouched.
+	//
+	//   data                   state and counters
+	//   data on / data off     packet mode, remembered in config.txt
+	//   loopback on|off        build the packet and feed it straight back
+	//                          instead of transmitting (runtime only)
+	//   kissport N             KISS port, default 8001 (runtime only)
+	//
+	// This has to come before the "da" (destination address) test below,
+	// which would otherwise read "data on" as destination "ta".  Loopback and
+	// the port are separate commands on purpose: config.txt keeps the
+	// "data on|off" line by replacing it, and a "data loopback" line would be
+	// swept up by that replacement.
+	if(strncmp(token[0],"data",4)==0){
+		char line[240];
+		if(nt == 1 || strncmp(token[1],"st",2)==0){
+			m17_ax25_status(line, sizeof(line));
+			gui_cmd_resp(line);
+			snprintf(line, sizeof(line), "KISS port %u, source address %s",
+			         m17_ax25_port(),
+			         m17_ax25_call()[0] ? m17_ax25_call() : "(the station sa)");
+			gui_cmd_resp(line);
+			valid = true;
+		} else if(strncmp(token[1],"on",2)==0 || strncmp(token[1],"off",3)==0){
+			bool on = (strncmp(token[1],"on",2)==0);
+			m17_ax25_set_enabled(on);
+			save_line_to_config("data", on ? "data on" : "data off");
+			gui_cmd_resp(on ? "AX.25 packet mode on" : "AX.25 packet mode off");
+			valid = true;
+		}
+	}
+
+	// Framing: which M17 mode carries the AX.25 frames.  Packet mode is the
+	// specified way to carry data; stream mode survives a link that packet mode
+	// does not.  Runtime only, so the two can be compared without a rebuild.
+	if(strncmp(token[0],"framing",7)==0){
+		char text[80];
+		if(nt == 2 && strncmp(token[1],"st",2)==0){
+			m17_ax25_set_framing(1);
+			gui_cmd_resp("AX.25 frames carried in M17 stream mode");
+			valid = true;
+		} else if(nt == 2 && (strncmp(token[1],"pa",2)==0)){
+			m17_ax25_set_framing(0);
+			gui_cmd_resp("AX.25 frames carried in M17 packet mode");
+			valid = true;
+		} else if(nt == 1){
+			snprintf(text, sizeof(text), "AX.25 framing: %s",
+			         m17_ax25_framing() ? "stream" : "packet");
+			gui_cmd_resp(text);
+			valid = true;
+		}
+	}
+
+	// Soft decision metric: the original linear/threshold pair or max-log LLRs.
+	// Runtime only, so the two can be compared on the same frames.
+	if(strncmp(token[0],"demap",5)==0){
+		if(nt == 2 && strncmp(token[1],"ll",2)==0){
+			m17_demap_set_llr(1);
+			gui_cmd_resp("soft decisions: max-log LLR");
+			valid = true;
+		} else if(nt == 2 && strncmp(token[1],"ol",2)==0){
+			m17_demap_set_llr(0);
+			gui_cmd_resp("soft decisions: original linear");
+			valid = true;
+		} else if(nt == 1){
+			gui_cmd_resp(m17_demap_llr_mode() ? "soft decisions: LLR" : "soft decisions: original");
+			valid = true;
+		}
+	}
+
+	// Wire test: run a packet burst through the real receive chain, from ideal
+	// symbol values upwards, so the coding chain is exercised with no radio.
+	if(strcmp(token[0],"wiretest")==0){
+		m17_ax25_wire_test();
+		valid = true;
+	}
+
+	// AX.25 packet loopback: build the burst and feed it straight back into
+	// the receive path, so a KISS host can be exercised with no radio.
+	if(strcmp(token[0],"loopback")==0 && nt == 2){
+		bool on = (strncmp(token[1],"on",2)==0);
+		m17_ax25_set_loopback(on);
+		gui_cmd_resp(on ? "AX.25 loopback on: nothing is transmitted"
+		                : "AX.25 loopback off: packets go to the transmitter");
+		valid = true;
+	}
+
+	// KISS port for the packet host, default 8001.
+	if(strcmp(token[0],"kissport")==0 && nt == 2){
+		unsigned want = (unsigned)atoi(token[1]);
+		char line[64];
+		if(m17_ax25_set_port(want)){
+			snprintf(line, sizeof(line), "AX.25 KISS port %u", m17_ax25_port());
+			gui_cmd_resp(line);
+		} else {
+			gui_cmd_resp("AX.25 cannot listen on that port");
+		}
+		valid = true;
+	}
+
 	// Transmitter Gain
 	if(strncmp(token[0],"tg",2)==0){
 		if(	nt == 2 ){
@@ -237,7 +342,10 @@ void mmi_parse(char *cmd){
 	// Destination Address.  A leading "#" is dropped: it is not one of the 40 M17
 	// characters (space, A-Z, 0-9, - / .), so "#PARROT" cannot be encoded - and
 	// "PARROT" is what the reflector actually looks for.
-	if(strncmp(token[0],"da",2)==0){
+	// "da" is a two-letter abbreviation, so it also matches "data": without the
+	// second test, every boot that reads "data on" from config.txt also sets the
+	// destination address to "ON".
+	if(strncmp(token[0],"da",2)==0 && strncmp(token[0],"data",4)!=0){
 		char text[16];
 		const char *want = (token[1][0] == '#') ? token[1] + 1 : token[1];
 		pad_address(want, text);
@@ -245,7 +353,9 @@ void mmi_parse(char *cmd){
 		valid = true;
 	}
 	// Broadcast destination Address
-	if(strncmp(token[0],"ba",2)==0){
+	/* Exact match: a two character prefix also caught anything starting with
+	 * "ba", which silently broadcast the transmission. */
+	if(strcmp(token[0],"ba")==0 || strcasecmp(token[0],"broadcast")==0){
 		m17_txrx_set_brd_add();
 		valid = true;
 	}
@@ -357,7 +467,9 @@ void mmi_parse(char *cmd){
 		}
 	}
 
-	if(strncmp(token[0],"w",1)==0){
+	/* "w" is the clear-log key in the web UI, but a one character prefix matched
+	 * every command beginning with w - typing "wiretest" also wiped the log. */
+	if(strcmp(token[0],"w")==0 || strcmp(token[0],"clear")==0){
 		gui_update_clear();
 		valid = true;
 	}
@@ -936,8 +1048,9 @@ void mmi_parse(char *cmd){
 	}
 #endif
 
-	// Help
-	if(strncmp(token[0],"h",1)==0){
+	// Help.  Exact, so a mistyped command still reports "Invalid command" rather
+	// than silently printing the help through a one character prefix match.
+	if(strcmp(token[0],"h")==0 || strcmp(token[0],"help")==0 || strcmp(token[0],"?" )==0){
 		help();
 		valid = true;
 	}
