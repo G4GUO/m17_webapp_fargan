@@ -854,8 +854,16 @@ void gui_power(double v) {
 void gui_char(char c) { (void)c; }
 
 void gui_save_src_address(uint48_t add) {
+    // The receive path calls this for every decoded frame - including each chunk
+    // of a packet frame - so logging unconditionally buried the console in
+    // "src <callsign>" lines and hid everything worth reading.  Say it once, when
+    // the station heard changes.
+    static char heard[10];
     decode_addr(add, m_src, sizeof(m_src));
-    log_send("rx", "src %s", m_src);
+    if (strcmp(heard, m_src) != 0) {
+        snprintf(heard, sizeof(heard), "%s", m_src);
+        log_send("rx", "src %s", m_src);
+    }
     push_state();
 }
 
