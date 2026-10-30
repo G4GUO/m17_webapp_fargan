@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include "m17defines.h"
+#include "m17_ax25.h"
 
 // Receive-path tracing: build with DIAG=1 (makefile) to enable.
 #ifdef M17WEB_DIAG
@@ -31,7 +32,10 @@ void copy_lich(void){
 	memcpy(m_lsf[1],m_lsf[0],30);
 }
 void valid_packet_received(uint8_t *packet, int len){
-
+	// AX.25 over M17: the payload is a type byte followed by the frame.  The
+	// bridge strips the type byte and hands it to the KISS host; with packet
+	// mode off it does nothing at all.
+	m17_ax25_rx_packet( packet, len );
 }
 
 // The position a station last sent us: M17 puts a GNSS position in the LSF
@@ -118,8 +122,13 @@ void parse_packet( uint8_t *data, uint8_t eof, uint8_t fn){
     	}
         m_packet_idx = 0;
     }else{
+        /* Chunk fn is 25 bytes at offset fn*25, so the next write goes at
+         * (fn+1)*25.  This used to leave the index at fn*25, which made the
+         * following chunk overwrite the one just stored: every frame longer than
+         * one chunk failed its CRC and was dropped, while single chunk frames
+         * (SABM, UA, RR) worked - so connections succeeded but no data passed. */
         memcpy(&m_packet[fn*25],data,25);
-        m_packet_idx = fn*25;
+        m_packet_idx = (fn+1)*25;
     }
 }
 void parse_lsf( uint8_t *in ){
@@ -150,6 +159,7 @@ void update_lich(uint8_t *in){
 	    // Check the CRC
 	    uint16_t crc = m17_crc_array_encode( m_lsf[0], 30 );
 	    diag("lich seq=%d lsf_crc=0x%04x %s", seq, crc, crc == 0 ? "VALID" : "");
+
 	    if( crc == 0x0000 ){
 		    // valid LSF, save a good copy
 	    	copy_lich();
@@ -173,7 +183,21 @@ void decode_link_frame(float *sb){
 	// link setup frame was never actually validated.  Check the frame we decoded.
 	uint16_t lsf_crc = m17_crc_array_encode( bytes, 30 );
 	diag("link setup lsf_crc=0x%04x %s", lsf_crc, lsf_crc == 0 ? "VALID" : "");
+	if(lsf_crc != 0){
+		char hex[3*30 + 1];
+		int  o = 0;
+		for(int i = 0; i < 30; i++)
+			o += snprintf(&hex[o], sizeof(hex) - o, "%02x", bytes[i]);
+		diag("lsf bytes: %s", hex);
+	}
 	if(lsf_crc == 0){
+	    /* The standalone LSF is the frame that actually arrives intact - the
+	     * chunked LICH copies rarely assemble into a valid 30 bytes.  The
+	     * stream decoder gates every payload byte on m_lsf[1], which until now
+	     * was only ever written by copy_lich(), so a good LSF frame was parsed
+	     * and then discarded and the stream path waited forever on a stale
+	     * buffer.  Store it: nothing else needs to know about the LICH. */
+	    memcpy(m_lsf[1], bytes, 30);
 	    parse_lsf(bytes);
 	}
 }
@@ -228,6 +252,12 @@ void decode_stream_frame(float *sb){
     if(stored_crc == 0){
         // Point to start of data
         uint8_t *data = &pld[2];
+        // A link setup frame tagged for the AX.25 bridge carries data, not
+        // audio: hand the payload to it instead of the speaker or the network.
+        if(m17_ax25_is_stream_tag(&m_lsf[1][14])){
+            m17_ax25_rx_stream(data, 16);
+            return;
+        }
         if(m17_db_get_chan_type() == DRTODN ){
         	// Send to the network
      	    m17_net_new_rx_data( m_frame_id, m_lsf[1], fn, data);
@@ -248,11 +278,17 @@ void decode_packet_frame(float *sb){
 	m17_de_punc_p3(so[0], so[1], 420);
 	// Viterbi
 	m17_viterbi_decode( so[1], bits, 420);
-	pack_1_to_8(&bits[1], bytes, 208);// Discard 2 tail bits
+	/* 206 type 1 bits: 200 of chunk and 6 of metadata.  Reading 208 took two
+	 * bits that belong to the flush bits, which shifted the metadata. */
+	pack_1_to_8(&bits[1], bytes, 206);
 	// Extract EOF file
 	uint8_t eof = bytes[25]>>7;
 	// Extract fn field
 	uint8_t fn = (bytes[25]>>2)&0x1F;
+	/* printf, not diag(): diag() has a 400 line budget per process and goes
+	 * silent on a busy receiver, which is exactly when a lost chunk matters. */
+	printf("m17web: packet frame eof=%d fn=%d\n", eof, fn);
+	fflush(stdout);
 	parse_packet( bytes, eof, fn);
 }
 void decode_bert_frame(float *sb){
@@ -264,6 +300,9 @@ void decode_bert_frame(float *sb){
 //
 void m17_rx_parse(float *s, uint8_t type){
 	float sb[384];// soft bits
+	// Any frame heard means the channel is busy: a packet transmission waits
+	// for it to go quiet (see m17_ax25_service).
+	m17_ax25_note_activity();
 	//float m_f_sb[384];// soft bits
 #ifdef __TRACE__
     printf("Type: %d ",type);

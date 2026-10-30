@@ -11,3 +11,10 @@ sa g4guo
 ba
 ga g4guo g
 conn M17 C
+
+# AX.25 over M17 packet mode: a KISS host (BPQ, kissnetd, Direwolf) connects
+# to TCP port 8001 and the station transmits its frames as M17 packets.  Off
+# unless this line says otherwise.
+# data on
+# loopback on      # build the packet and feed it back instead of transmitting
+# kissport 8001

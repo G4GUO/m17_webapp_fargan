@@ -103,8 +103,9 @@ else
 SRCS := $(filter-out audio_pulse.cpp,$(SRCS))
 endif
 
-# Web UI needs the C server; the console build needs ncurses instead
-CSRCS =
+# Web UI needs the C server; the console build needs ncurses instead.
+# The AX.25 packet code is taken verbatim from G4GUO/m17-ax25 and built as C.
+CSRCS = kiss.c m17_packet.c m17_bridge.c
 ifeq ($(WEB),1)
 CXXFLAGS += -DUI_WEB
 CSRCS    += webserver.c

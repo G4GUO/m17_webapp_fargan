@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <string.h>
 #include "m17defines.h"
+#include "m17_ax25.h"
 #include "bluetooth.h"
 
 static uint8_t m_meta[16];
@@ -160,6 +161,9 @@ int main( int c, char **argv ){
 	// Initialise the user interface (this also starts the web server)
 	gui_open();
     gui_update();
+
+	// AX.25 over M17 starts closed; config.txt decides, if it says anything
+	m17_ax25_init();
 
 	// Load initialisation
 	mmi_load_file("config.txt");
